@@ -78,6 +78,16 @@ root_agent = zil.create_agent(
 
 See the [SDK Reference](https://getzil.dev/docs/sdk) for the full API.
 
+## Example
+
+The [`examples/hello-agent`](examples/hello-agent) directory contains a minimal reference agent you can run immediately:
+
+```bash
+cd examples/hello-agent
+pip install -r requirements.txt
+zil validate && zil audit && zil run
+```
+
 ## Community
 
 - **Slack** — [Join the Zil community](https://join.slack.com/t/zilorg/shared_invite/zt-3xye83sw1-cU3H1Hb_yFbmyBBgbt5VGQ) for questions, feedback, and discussion

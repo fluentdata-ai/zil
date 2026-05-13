@@ -1,0 +1,28 @@
+apiVersion: zil/v1
+kind: Agent
+metadata:
+  name: hello-agent
+  version: 0.1.0
+  description: A minimal Zil reference agent with guardrails and identity.
+  labels:
+    team: example
+spec:
+  runtime:
+    framework: adk
+    language: python
+    python_version: "3.12"
+    llm:
+      adapter: ./adapters/llm.yaml
+    embedding:
+      adapter: ./adapters/embed.yaml
+    resource_limits:
+      max_tokens_per_request: 8192
+      max_duration_seconds: 120
+  identity: ./identity
+  # evals: ./evals
+  # observability: ./observability
+  env:
+    - name: GOOGLE_API_KEY
+      description: Gemini API key
+      required: true
+      secret: true

@@ -1,0 +1,24 @@
+# Guardrails — runtime-enforced rules for the agent
+# Docs: https://getzil.dev/docs/identity/guardrails
+
+detection:
+  prompt_injection: true
+  pii_output: true
+  pii_input: false
+
+blocked_patterns: []
+
+denied_topics: []
+
+output_constraints:
+  max_response_length: 4000
+
+hard_blocks:
+  - topic: illegal_activity
+    description: Refuse requests for illegal activities.
+  - topic: personal_data_extraction
+    description: Never extract or store personal data beyond the session.
+
+escalation_triggers:
+  - condition: user_requests_human
+    action: Offer to connect the user with a human operator.

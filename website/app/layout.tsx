@@ -28,12 +28,14 @@ export const metadata: Metadata = {
     url: "https://getzil.dev",
     siteName: "Zil",
     type: "website",
+    images: [{ url: "/opengraph-image", width: 1200, height: 630 }],
   },
   twitter: {
     card: "summary_large_image",
     title: "Zil — A framework for production AI agents",
     description:
       "An open methodology for building, packaging, and operating production AI agents at enterprise scale.",
+    images: ["/opengraph-image"],
   },
   robots: { index: true, follow: true },
 };
