@@ -20,7 +20,14 @@ console = Console()
     help="Print a specific file from the archive (e.g. manifest.yaml, identity/persona.md).",
 )
 @click.option("--json", "output_json", is_flag=True, help="Machine-readable JSON output.")
-def inspect(archive: Path, show: str | None, output_json: bool) -> None:
+@click.option("--verify", is_flag=True, help="Verify the cosign signature of the archive.")
+@click.option(
+    "--key",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Path to cosign public key for verification (default: keyless/certificate).",
+)
+def inspect(archive: Path, show: str | None, output_json: bool, verify: bool, key: Path | None) -> None:
     """Inspect a .zil archive without extracting it.
 
     Displays the manifest summary, SBOM overview, eval results,
@@ -29,6 +36,11 @@ def inspect(archive: Path, show: str | None, output_json: bool) -> None:
     if not archive.name.endswith(".zil"):
         console.print(f"[red]Error:[/red] Expected a .zil archive, got '{archive.name}'")
         raise SystemExit(1)
+
+    # --verify: signature verification (no archive read needed)
+    if verify:
+        _verify_signature(archive, key)
+        return
 
     from zil.packaging.archive import read_archive
 
@@ -89,6 +101,17 @@ def _print_summary(archive: Path, meta) -> None:
             missing_info = f" ({missing} missing at pack time)" if missing else ""
             console.print(f"  Env coverage: {resolved}/{declared} resolved locally{missing_info}")
 
+    # Cost config
+    if meta.cost_config:
+        parts = []
+        if meta.cost_config.get("max_tokens_per_request"):
+            parts.append(f"request≤{meta.cost_config['max_tokens_per_request']}")
+        if meta.cost_config.get("max_tokens_per_session"):
+            parts.append(f"session≤{meta.cost_config['max_tokens_per_session']}")
+        alert = meta.cost_config.get("alert_threshold_pct", 80)
+        parts.append(f"alert@{alert}%")
+        console.print(f"  Cost:        {', '.join(parts)}")
+
     console.print()
 
     # Component table
@@ -144,6 +167,23 @@ def _show_file(archive: Path, file_path: str) -> None:
         console.print("\nAvailable files:")
         for name in sorted(names):
             console.print(f"  {name}")
+        raise SystemExit(1)
+
+
+def _verify_signature(archive: Path, key: Path | None) -> None:
+    """Verify the cosign signature of an archive."""
+    from zil.packaging.signing import verify_archive
+
+    console.print(f"\n→ Verifying signature for [bold]{archive.name}[/bold]...", end="  ")
+
+    result = verify_archive(archive, key_path=key)
+    if result.verified:
+        console.print("[green]✓ Verified[/green]")
+        if result.signer_identity:
+            console.print(f"  Signer: {result.signer_identity}")
+    else:
+        console.print("[red]✗ Not verified[/red]")
+        console.print(f"  {result.error}")
         raise SystemExit(1)
 
 

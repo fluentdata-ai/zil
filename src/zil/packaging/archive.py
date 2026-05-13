@@ -31,6 +31,7 @@ class ArchiveMetadata:
     env_var_count: int = 0
     env_secret_count: int = 0
     env_coverage: dict[str, Any] | None = None
+    cost_config: dict[str, Any] | None = None
 
 
 # Directories and files to include in the archive (relative to project root)
@@ -183,6 +184,9 @@ def read_archive(archive_path: Path) -> ArchiveMetadata:
         env_var_count = len(env_declarations)
         env_secret_count = sum(1 for e in env_declarations if e.get("secret"))
 
+        # Read cost config
+        cost_config = manifest.get("spec", {}).get("cost")
+
     return ArchiveMetadata(
         name=name,
         version=version,
@@ -199,6 +203,7 @@ def read_archive(archive_path: Path) -> ArchiveMetadata:
         env_var_count=env_var_count,
         env_secret_count=env_secret_count,
         env_coverage=env_coverage,
+        cost_config=cost_config,
     )
 
 

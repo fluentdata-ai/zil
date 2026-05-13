@@ -95,10 +95,19 @@ def _check_env_coverage(
     help="Output directory for the .zil archive (default: dist/).",
 )
 @click.option("--skip-evals", is_flag=True, help="Skip eval suite (warns loudly).")
+@click.option("--sign", is_flag=True, help="Sign the archive with cosign after building.")
+@click.option(
+    "--key",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Path to cosign private key for signing (default: keyless/OIDC).",
+)
 def pack(
     project_dir: Path,
     output_dir: Path | None,
     skip_evals: bool,
+    sign: bool,
+    key: Path | None,
 ) -> None:
     """Build a .zil archive from a Zil agent project.
 
@@ -199,3 +208,23 @@ def pack(
     console.print("[green]✓[/green]")
 
     console.print(f"\n→ Wrote: [bold]{archive_path}[/bold] ({size_str})")
+
+    # --- Signing ---
+    if sign:
+        console.print("\n→ Signing archive with cosign...", end="  ")
+        from zil.packaging.signing import sign_archive
+
+        sign_result = sign_archive(archive_path, key_path=key)
+        if sign_result.signed:
+            console.print("[green]✓[/green]")
+            if sign_result.signature_path:
+                console.print(f"  Signature: {sign_result.signature_path}")
+            if sign_result.certificate_path:
+                console.print(f"  Certificate: {sign_result.certificate_path}")
+            if sign_result.signer_identity:
+                console.print(f"  Signer: {sign_result.signer_identity}")
+            console.print(f"  Type: {sign_result.signature_type}")
+        else:
+            console.print("[red]✗[/red]")
+            console.print(f"[red]Error:[/red] {sign_result.error}")
+            raise SystemExit(1)

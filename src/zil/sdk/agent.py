@@ -60,6 +60,7 @@ def create_agent(
     instruction: str | None = None,
     enable_telemetry: bool = True,
     enable_guardrails: bool = True,
+    enable_cost_tracking: bool = True,
 ) -> Any:
     """Create an ADK LlmAgent wired from the Zil project manifest.
 
@@ -79,6 +80,8 @@ def create_agent(
             managing OTel providers yourself.
         enable_guardrails: Load and enforce guardrail rules from
             ``identity/guardrails.yaml`` at runtime (default ``True``).
+        enable_cost_tracking: Track token usage and enforce budgets from
+            ``spec.cost`` in the manifest (default ``True``).
 
     Returns:
         A ``google.adk.agents.LlmAgent`` instance.
@@ -144,6 +147,24 @@ def create_agent(
             "✓" if engine.has_output_checks else "✗",
         )
 
+    # Load cost tracker from spec.cost
+    cost_callback = None
+    if enable_cost_tracking:
+        from zil.sdk.cost_callback import CostCallback
+
+        resolved_model_for_cost = model or resolve_model(ctx.llm_adapter)
+        zil.cost._initialize(ctx.cost_config)
+        cost_callback = CostCallback(
+            tracker=zil.cost,
+            model=resolved_model_for_cost,
+        )
+        if ctx.cost_config:
+            logger.info(
+                "Cost tracking active — session limit: %s, request limit: %s",
+                ctx.cost_config.get("max_tokens_per_session", "none"),
+                ctx.cost_config.get("max_tokens_per_request", "none"),
+            )
+
     resolved_model = model or resolve_model(ctx.llm_adapter)
     resolved_instruction = instruction or compose_instruction(
         persona=ctx.identity.persona,
@@ -164,5 +185,9 @@ def create_agent(
     # Attach the guardrail callback to the agent for direct access
     # Users can call agent._zil_guardrails.check_input(text) etc.
     agent._zil_guardrails = guardrail_callback  # type: ignore[attr-defined]
+
+    # Attach the cost callback to the agent
+    # Users can call agent._zil_cost.record(input_tokens, output_tokens) etc.
+    agent._zil_cost = cost_callback  # type: ignore[attr-defined]
 
     return agent

@@ -84,6 +84,10 @@
           "items": {
             "$ref": "#/$defs/envVar"
           }
+        },
+        "cost": {
+          "$ref": "#/$defs/cost",
+          "description": "Token usage tracking and budget configuration."
         }
       }
     }
@@ -116,6 +120,34 @@
           "type": "boolean",
           "default": false,
           "description": "Whether this variable contains sensitive data (masked in prompts)."
+        }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_tokens_per_request": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Hard cap on tokens per LLM call. Requests exceeding this are blocked."
+        },
+        "max_tokens_per_session": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Hard cap on total tokens per agent session."
+        },
+        "alert_threshold_pct": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 80,
+          "description": "Warn when session usage reaches this percentage of max_tokens_per_session."
+        },
+        "track_by_model": {
+          "type": "boolean",
+          "default": true,
+          "description": "Break down token usage per model in metrics."
         }
       }
     },

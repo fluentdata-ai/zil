@@ -5,6 +5,24 @@ All notable changes to the `zil-ai` package will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.11] — 2026-05-13
+
+### Added
+
+- **Token-based cost tracking** — new `spec.cost` manifest section for declaring token budgets (`max_tokens_per_request`, `max_tokens_per_session`, `alert_threshold_pct`, `track_by_model`). No USD — Zil tracks raw token counts; dollar pricing is delegated to the future Zil Runtime.
+- **`zil.cost` singleton** — module-level cost tracker accessible as `zil.cost.total_tokens`, `zil.cost.by_model`, `zil.cost.budget_remaining`, `zil.cost.reset()`.
+- **`CostTracker` class** — thread-safe token usage accumulator with per-request and per-session budget enforcement. Returns `CostResult` (allowed/warned/blocked) on each recording.
+- **`CostCallback`** — ADK-compatible callback that extracts usage metadata from LLM responses (Gemini, OpenAI, Anthropic) and feeds it to the tracker. Emits OTel span attributes (`llm.usage.input_tokens`, `llm.usage.output_tokens`, `llm.usage.model`).
+- **`create_agent(enable_cost_tracking=True)`** — automatically initializes cost tracking from `spec.cost` and attaches the callback. Access via `agent._zil_cost`.
+- **`zil validate` cost checks** — warns if `spec.cost` is absent, flags inconsistencies (session < request budget, exceeds resource_limits).
+- **`zil inspect` cost display** — shows budget configuration from archived manifests.
+- **`zil pack --sign`** — signs the `.zil` archive using cosign (keyless/Sigstore OIDC by default). Produces `.sig` and `.cert` files alongside the archive.
+- **`zil pack --sign --key <path>`** — key-based cosign signing for CI environments.
+- **`zil inspect --verify`** — verifies the cosign signature of a `.zil` archive (keyless or `--key`).
+- **`zil push` signature attachment** — automatically pushes `.sig`/`.cert` alongside the OCI artifact when present.
+- **`zil init` template** — new commented-out `spec.cost` section in scaffolded `manifest.yaml`.
+- 45 new tests (`test_cost.py`, `test_signing.py`); 295 total tests.
+
 ## [0.1.10] — 2026-05-12
 
 ### Added

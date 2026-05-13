@@ -47,3 +47,16 @@ def push(archive: Path, registry: str) -> None:
         raise SystemExit(1)
 
     console.print(f"[green]✓[/green] Pushed: [bold]{reference}[/bold]")
+
+    # Push signature files alongside if they exist
+    sig_path = archive.with_suffix(archive.suffix + ".sig")
+    cert_path = archive.with_suffix(archive.suffix + ".cert")
+    if sig_path.exists():
+        console.print("→ Pushing signature...", end="  ")
+        try:
+            from zil.packaging.registry import push_signature
+
+            push_signature(sig_path, cert_path if cert_path.exists() else None, reference)
+            console.print("[green]✓[/green]")
+        except Exception as e:
+            console.print(f"[yellow]⚠ {e}[/yellow]")

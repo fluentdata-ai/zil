@@ -57,6 +57,11 @@ spec:
   identity: ./identity
 {evals_line}
 {obs_line}
+  # cost:
+  #   max_tokens_per_request: 8192
+  #   max_tokens_per_session: 500000
+  #   alert_threshold_pct: 80
+  #   track_by_model: true
   env:
 {env_vars}
 """

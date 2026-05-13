@@ -60,6 +60,52 @@ def push_archive(archive_path: Path, registry: str) -> str:
     return target
 
 
+def push_signature(
+    sig_path: Path,
+    cert_path: Path | None,
+    artifact_reference: str,
+) -> str:
+    """Push signature files as a referrer to the OCI artifact.
+
+    Args:
+        sig_path: Path to the .sig file.
+        cert_path: Optional path to the .cert file.
+        artifact_reference: The OCI reference of the signed artifact.
+
+    Returns:
+        The reference string for the signature artifact.
+    """
+    try:
+        import oras.client
+    except ImportError as e:
+        raise ImportError(
+            "oras is required for registry operations. "
+            "Install with: pip install 'zil-ai[registry]'"
+        ) from e
+
+    # Push signature as a separate artifact tagged with -sig suffix
+    sig_target = artifact_reference.replace(":", "-sig:")
+    if ":" not in sig_target:
+        sig_target = f"{artifact_reference}-sig"
+
+    files = [str(sig_path)]
+    if cert_path and cert_path.exists():
+        files.append(str(cert_path))
+
+    client = oras.client.OrasClient()
+    client.push(
+        target=sig_target,
+        files=files,
+        manifest_annotations={
+            "dev.getzil.type": "agent-signature",
+            "dev.getzil.signed-artifact": artifact_reference,
+        },
+        disable_path_validation=True,
+    )
+
+    return sig_target
+
+
 def pull_archive(reference: str, output_dir: Path) -> Path:
     """Pull a .zil archive from an OCI registry.
 

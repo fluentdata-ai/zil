@@ -21,6 +21,7 @@ class ProjectContext:
         llm_adapter: dict[str, Any],
         observability: dict[str, Any] | None = None,
         env_declarations: list[dict[str, Any]] | None = None,
+        cost_config: dict[str, Any] | None = None,
     ) -> None:
         self.project_dir = project_dir
         self.manifest = manifest
@@ -28,6 +29,7 @@ class ProjectContext:
         self.llm_adapter = llm_adapter
         self.observability = observability
         self.env_declarations = env_declarations or []
+        self.cost_config = cost_config
 
     @property
     def name(self) -> str:
@@ -89,6 +91,7 @@ def load_project(project_dir: Path | None = None) -> ProjectContext:
     observability = _load_observability(root, manifest)
 
     env_declarations = manifest.get("spec", {}).get("env", [])
+    cost_config = manifest.get("spec", {}).get("cost")
 
     return ProjectContext(
         project_dir=root,
@@ -97,6 +100,7 @@ def load_project(project_dir: Path | None = None) -> ProjectContext:
         llm_adapter=llm_adapter,
         observability=observability,
         env_declarations=env_declarations,
+        cost_config=cost_config,
     )
 
 

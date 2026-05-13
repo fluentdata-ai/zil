@@ -93,6 +93,7 @@ def validate_project(project_dir: Path) -> ValidationResult:
     _check_observability(project_dir, manifest, result)
     _check_env(project_dir, manifest, result)
     _check_guardrails(project_dir, manifest, result)
+    _check_cost(manifest, result)
 
     return result
 
@@ -321,5 +322,53 @@ def _check_guardrails(project_dir: Path, manifest: dict, result: ValidationResul
                 "warn",
                 "identity/guardrails.yaml — no output checks configured "
                 "(consider adding output_constraints or pii_output detection)",
+            )
+        )
+
+
+def _check_cost(manifest: dict, result: ValidationResult) -> None:
+    """Check spec.cost configuration and flag inconsistencies."""
+    spec = manifest.get("spec", {})
+    cost_config = spec.get("cost")
+
+    if not cost_config:
+        result.checks.append(CheckResult("warn", "spec.cost — not configured (no token budgets)"))
+        return
+
+    max_per_request = cost_config.get("max_tokens_per_request")
+    max_per_session = cost_config.get("max_tokens_per_session")
+    alert_pct = cost_config.get("alert_threshold_pct", 80)
+
+    parts = []
+    if max_per_request:
+        parts.append(f"request={max_per_request}")
+    if max_per_session:
+        parts.append(f"session={max_per_session}")
+    parts.append(f"alert@{alert_pct}%")
+
+    result.checks.append(
+        CheckResult("pass", f"spec.cost — configured ({', '.join(parts)})")
+    )
+
+    # Warn if per-request budget exceeds resource_limits.max_tokens_per_request
+    runtime = spec.get("runtime", {})
+    resource_limits = runtime.get("resource_limits", {})
+    rl_max_tokens = resource_limits.get("max_tokens_per_request")
+    if max_per_request and rl_max_tokens and max_per_request > rl_max_tokens:
+        result.checks.append(
+            CheckResult(
+                "warn",
+                f"spec.cost — max_tokens_per_request ({max_per_request}) exceeds "
+                f"resource_limits.max_tokens_per_request ({rl_max_tokens})",
+            )
+        )
+
+    # Warn if session budget is less than per-request budget
+    if max_per_request and max_per_session and max_per_session < max_per_request:
+        result.checks.append(
+            CheckResult(
+                "warn",
+                f"spec.cost — max_tokens_per_session ({max_per_session}) is less than "
+                f"max_tokens_per_request ({max_per_request})",
             )
         )
