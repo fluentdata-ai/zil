@@ -1,0 +1,146 @@
+# LLM Adapter
+
+The LLM adapter configures which language model your agent uses. It lives at `adapters/llm.yaml` and is referenced by the manifest's `spec.runtime.llm.adapter` field.
+
+## Configuration
+
+```yaml
+# adapters/llm.yaml
+provider: gemini
+model: gemini-2.0-flash
+auth:
+  env_var: GOOGLE_API_KEY
+parameters:
+  temperature: 0.7
+  max_tokens: 4096
+```
+
+## Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `provider` | string | Yes | LLM provider identifier |
+| `model` | string | Yes | Model name/ID |
+| `auth.env_var` | string | Yes | Environment variable containing the API key |
+| `parameters.temperature` | float | No | Sampling temperature (0.0–2.0). Default: `0.7` |
+| `parameters.max_tokens` | integer | No | Maximum tokens per response. Default: `4096` |
+
+## Supported providers
+
+### Gemini (AI Studio)
+
+```yaml
+provider: gemini
+model: gemini-2.0-flash
+auth:
+  env_var: GOOGLE_API_KEY
+```
+
+Get your API key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+
+Available models: `gemini-2.0-flash`, `gemini-2.5-pro`, `gemini-2.5-flash`
+
+### Anthropic
+
+```yaml
+provider: anthropic
+model: claude-sonnet-4-20250514
+auth:
+  env_var: ANTHROPIC_API_KEY
+```
+
+Available models: `claude-sonnet-4-20250514`, `claude-haiku-4-20250414`, `claude-opus-4-20250514`
+
+### OpenAI
+
+```yaml
+provider: openai
+model: gpt-4o
+auth:
+  env_var: OPENAI_API_KEY
+```
+
+Available models: `gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo`
+
+### Vertex AI (Google Cloud)
+
+```yaml
+provider: vertex-ai
+model: gemini-2.0-flash
+auth:
+  env_var: GOOGLE_APPLICATION_CREDENTIALS
+  # Required for Vertex AI
+  project_env_var: GOOGLE_CLOUD_PROJECT
+  location_env_var: GOOGLE_CLOUD_LOCATION
+```
+
+Vertex AI requires a GCP service account JSON file and project configuration. Set these in your `.env`:
+
+```bash
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+GOOGLE_CLOUD_PROJECT=your-project-id
+GOOGLE_CLOUD_LOCATION=us-central1
+```
+
+Available models: `gemini-2.0-flash`, `gemini-2.5-pro`
+
+## Embedding adapter
+
+The embedding adapter follows the same pattern at `adapters/embed.yaml`:
+
+```yaml
+# adapters/embed.yaml
+provider: openai
+model: text-embedding-3-small
+auth:
+  env_var: OPENAI_API_KEY
+```
+
+### Vertex AI embeddings
+
+```yaml
+provider: vertex-ai
+model: text-embedding-005
+auth:
+  env_var: GOOGLE_APPLICATION_CREDENTIALS
+```
+
+## Runtime reference
+
+The manifest references adapters via relative paths:
+
+```yaml
+# manifest.yaml (excerpt)
+spec:
+  runtime:
+    llm:
+      adapter: ./adapters/llm.yaml
+    embedding:
+      adapter: ./adapters/embed.yaml
+```
+
+`zil validate` checks that these files exist and are valid YAML.
+
+## How the SDK uses adapters
+
+When you call `zil.create_agent()`, the SDK reads `adapters/llm.yaml` and maps it to an ADK-compatible model string:
+
+| Provider | Model | ADK model string |
+|----------|-------|-----------------|
+| `gemini` | `gemini-2.0-flash` | `gemini-2.0-flash` |
+| `anthropic` | `claude-sonnet-4-20250514` | `anthropic/claude-sonnet-4-20250514` |
+| `openai` | `gpt-4o` | `openai/gpt-4o` |
+| `vertex-ai` | `gemini-2.0-flash` | `gemini-2.0-flash` |
+
+Gemini and Vertex AI models are native to ADK and used directly. Anthropic and OpenAI models use the [LiteLLM](https://docs.litellm.ai/) prefix convention.
+
+You can override the model at runtime:
+
+```python
+import zil
+
+# Use a different model without changing llm.yaml
+agent = zil.create_agent(model="openai/gpt-4o-mini")
+```
+
+See [SDK Reference](/sdk) for all options.

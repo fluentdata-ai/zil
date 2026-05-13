@@ -1,0 +1,279 @@
+# Packaging & Registry
+
+Zil's packaging pipeline lets you build versioned, inspectable archives and publish them to OCI registries for reproducible deployments.
+
+## Pipeline overview
+
+```
+zil pack → dist/my-agent-1.0.0.zil
+zil push → us-central1-docker.pkg.dev/proj/agents/my-agent:1.0.0
+zil deploy --from → Cloud Run
+```
+
+## Building an archive
+
+```bash
+zil pack
+```
+
+This runs four steps:
+
+1. **Validate** — checks the project against the manifest schema
+2. **Eval gate** — runs the eval suite (blocks if below threshold; use `--skip-evals` to override)
+3. **SBOM** — generates a CycloneDX 1.5 bill of materials from `requirements.txt`
+4. **Archive** — creates a versioned `.zil` tar.gz in `dist/`
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--project-dir` | `.` | Project directory |
+| `--output-dir` | `dist/` | Output directory |
+| `--skip-evals` | — | Skip eval gate |
+
+### Archive contents
+
+```
+my-agent-1.0.0.zil
+├── manifest.yaml
+├── adapters/
+├── identity/
+├── evals/
+├── observability/
+├── my_agent/           # agent code
+├── BUILD_META.json
+├── SBOM.cyclonedx.json
+└── EVAL_RESULTS.json   # if evals ran
+```
+
+## Environment variables
+
+Agents need configuration at runtime — API keys, connection strings, feature flags. Zil provides a unified system to declare, validate, resolve, and access these variables across the full lifecycle.
+
+### Declaring variables in `manifest.yaml`
+
+Add a `spec.env` section to your manifest:
+
+```yaml
+spec:
+  env:
+    - name: GOOGLE_API_KEY
+      description: Gemini API key
+      required: true
+      secret: true
+    - name: MCP_DB_CONNECTION_STRING
+      description: PostgreSQL connection string for MCP server
+      required: true
+      secret: true
+    - name: OTEL_ENDPOINT
+      description: OpenTelemetry collector endpoint
+      required: false
+      default: http://localhost:4318
+```
+
+Each entry supports:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | — | Variable name (`UPPER_SNAKE_CASE`, required) |
+| `description` | string | — | Human-readable description |
+| `required` | boolean | `true` | Must be set at deploy time |
+| `default` | string | — | Fallback value if not provided |
+| `secret` | boolean | `false` | Sensitive data (masked in prompts, redacted in logs) |
+
+### Local development
+
+For local dev, put values in `.env.local` inside your agent module directory:
+
+```
+# my_agent/.env.local
+GOOGLE_API_KEY=AIzaSy...
+MCP_DB_CONNECTION_STRING=postgresql://localhost:5432/mydb
+```
+
+When you run `zil run` or `zil web`, `zil.config` automatically loads `.env` and `.env.local` from both the project root and module directory. **Existing environment variables are never overridden** — real env vars always take precedence over file values.
+
+Load order (each fills in what's missing):
+1. `{project_root}/.env`
+2. `{project_root}/.env.local`
+3. `{module_dir}/.env`
+4. `{module_dir}/.env.local`
+5. Process environment (always wins)
+
+### Pack-time cross-check
+
+`zil pack` validates that your `.env` files stay in sync with `spec.env`:
+
+```
+→ Checking env coverage...  ✓ 2/3 env var(s) resolved locally
+  ⚠ 'OTEL_ENDPOINT' declared in spec.env but not found in local .env files
+```
+
+| Scenario | Behavior |
+|----------|----------|
+| Var in `.env.local` but **not** in `spec.env` | **Fail** — catches config drift |
+| Var in `spec.env` but **not** in `.env` files | **Warn** — expected for deploy-time vars |
+
+Coverage results are recorded in `BUILD_META.json` inside the archive.
+
+### Deploy-time resolution
+
+At deploy, Zil collects values for all declared variables using this priority:
+
+1. Process environment variables
+2. `--env-file` (dotenv file for CI/automation)
+3. Interactive prompt (secrets are masked)
+
+```bash
+# CI/automation — provide values via file
+zil deploy --env-file .env.production
+
+# Interactive — prompted for each missing required var
+zil deploy
+  GOOGLE_API_KEY (Gemini API key): ****
+  MCP_DB_CONNECTION_STRING (PostgreSQL connection string): ****
+  ✓ Resolved 2 env variable(s)
+```
+
+Resolved variables are injected as Cloud Run environment variables via `--set-env-vars`.
+
+### SDK access with `zil.config`
+
+Access declared variables from agent code via the `zil.config` object:
+
+```python
+import zil
+
+root_agent = zil.create_agent(tools=[...])
+
+# Dict-like access
+api_key = zil.config["GOOGLE_API_KEY"]
+db_url = zil.config["MCP_DB_CONNECTION_STRING"]
+
+# With fallback
+endpoint = zil.config.get("OTEL_ENDPOINT", "http://localhost:4318")
+
+# Check presence
+if "OPTIONAL_VAR" in zil.config:
+    ...
+```
+
+`zil.config` is populated during `create_agent()`. It raises `MissingConfigError` for missing required vars and `KeyError` for undeclared vars.
+
+### Validation
+
+`zil validate` checks your env declarations:
+
+```
+✓ spec.env — 3 variable(s) declared (2 secret)
+⚠ spec.env — adapter llm references 'GOOGLE_API_KEY' but it is not declared in spec.env
+```
+
+It cross-references adapter configs (e.g., `auth.env_var` in `adapters/llm.yaml`) to ensure all referenced variables are declared.
+
+---
+
+## Inspecting an archive
+
+```bash
+# Rich summary
+zil inspect dist/my-agent-1.0.0.zil
+
+# Show a specific file
+zil inspect dist/my-agent-1.0.0.zil --show manifest.yaml
+
+# Machine-readable JSON
+zil inspect dist/my-agent-1.0.0.zil --json
+```
+
+## Publishing to a registry
+
+Push a `.zil` archive to any OCI-compatible registry:
+
+```bash
+zil push dist/my-agent-1.0.0.zil \
+  --registry us-central1-docker.pkg.dev/my-project/agents
+```
+
+The resulting reference is `<registry>/<agent-name>:<version>`, for example:
+`us-central1-docker.pkg.dev/my-project/agents/my-agent:1.0.0`
+
+## Deploying from a registry
+
+```bash
+zil deploy \
+  --from us-central1-docker.pkg.dev/my-project/agents/my-agent:1.0.0 \
+  --project my-project --region us-central1
+```
+
+You can also deploy from a local `.zil` file:
+
+```bash
+zil deploy --from dist/my-agent-1.0.0.zil \
+  --project my-project --region us-central1
+```
+
+---
+
+## Google Artifact Registry setup
+
+### 1. Create a repository
+
+```bash
+gcloud artifacts repositories create agents \
+  --repository-format=docker \
+  --location=us-central1 \
+  --description="Zil agent packages"
+```
+
+Use `docker` format — ORAS pushes OCI artifacts that are compatible with Docker-format repositories.
+
+### 2. Authenticate
+
+```bash
+gcloud auth configure-docker us-central1-docker.pkg.dev
+```
+
+This writes credentials to `~/.docker/config.json` that ORAS picks up automatically.
+
+### 3. Push
+
+```bash
+zil push dist/my-agent-1.0.0.zil \
+  --registry us-central1-docker.pkg.dev/my-project/agents
+```
+
+### 4. Deploy
+
+```bash
+zil deploy \
+  --from us-central1-docker.pkg.dev/my-project/agents/my-agent:1.0.0 \
+  --project my-project --region us-central1
+```
+
+### IAM permissions
+
+| Role | Who | Purpose |
+|------|-----|---------|
+| `roles/artifactregistry.writer` | Developer accounts | Push archives |
+| `roles/artifactregistry.reader` | CI/CD service accounts | Pull for deployment |
+
+---
+
+## Other registries
+
+`zil push` works with any OCI-compatible registry:
+
+```bash
+# GitHub Container Registry
+zil push dist/my-agent-1.0.0.zil --registry ghcr.io/my-org/agents
+
+# Amazon ECR
+zil push dist/my-agent-1.0.0.zil \
+  --registry 123456789.dkr.ecr.us-east-1.amazonaws.com/agents
+
+# Docker Hub
+zil push dist/my-agent-1.0.0.zil --registry docker.io/my-org/agents
+```
+
+Each registry uses its own authentication method (`docker login`, AWS ECR login, etc.). Ensure credentials are configured before pushing.

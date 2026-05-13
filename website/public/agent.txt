@@ -1,0 +1,96 @@
+# Zil — A framework for production AI agents
+# https://getzil.dev
+# License: Apache-2.0
+# Source: https://github.com/fluentdata-co/zil
+# Package: pip install zil-ai
+
+## What is Zil?
+
+Zil is an open-source framework by FluentData for building, validating,
+packaging, and deploying production AI agents. It composes with Google ADK,
+A2A, MCP, DeepEval, and OpenTelemetry.
+
+Zil provides a declarative manifest format (manifest.yaml) and CLI that
+standardizes agent operations across seven pillars: governance, security,
+data, observability, evaluation, cost, and architecture.
+
+## Core components
+
+- CLI: zil init, zil validate, zil run, zil web, zil eval, zil deploy, zil pack, zil inspect
+- SDK: zil.create_agent() — reads manifest, identity, and adapters, returns a configured ADK LlmAgent
+- Manifest: declarative YAML contract describing the agent
+- Archives: signed .zil packages (OCI-compatible)
+
+## Install
+
+    pip install zil-ai          # CLI only
+    pip install 'zil-ai[adk]'   # CLI + SDK + Google ADK
+
+## Quick start
+
+    zil init my-agent
+    cd my-agent && source .venv/bin/activate
+    zil validate
+    zil run
+
+## CLI commands
+
+    zil init <name>         Scaffold a new agent project
+    zil validate            Validate project against manifest schema
+    zil pack                Build a signed .zil archive
+    zil inspect <archive>   Inspect a .zil archive
+    zil run                 Run agent interactively (wraps adk run)
+    zil run --trace         Run with OTLP trace export
+    zil run --trace-console Run with console span output
+    zil web                 Start ADK web UI (wraps adk web)
+
+## SDK usage
+
+    import zil
+
+    root_agent = zil.create_agent(
+        tools=[my_tool],           # plain Python functions
+        model="gemini-2.0-flash",  # optional override
+    )
+
+## Project layout
+
+    my-agent/
+    ├── manifest.yaml           Agent manifest (the contract)
+    ├── my_agent/agent.py       Agent entry point
+    ├── adapters/llm.yaml       LLM provider config
+    ├── adapters/embed.yaml     Embedding provider config
+    ├── identity/persona.md     Agent persona
+    ├── identity/instructions.md Agent behavior rules
+    ├── identity/guardrails.yaml Hard rules and constraints
+    ├── evals/baseline.yaml     Evaluation suite
+    ├── observability/config.yaml OpenTelemetry tracing config
+    └── Dockerfile              Container build
+
+## Supported LLM providers
+
+- Gemini (AI Studio): gemini-2.0-flash, gemini-2.5-pro, gemini-2.5-flash
+- Anthropic: claude-sonnet-4-20250514, claude-haiku-4-20250414, claude-opus-4-20250514
+- OpenAI: gpt-4o, gpt-4o-mini, gpt-4-turbo
+- Vertex AI: gemini-2.0-flash, gemini-2.5-pro
+
+## Documentation
+
+Full documentation: https://getzil.dev/docs
+Agent-friendly docs: https://getzil.dev/docs/agent.txt
+
+- Getting Started: https://getzil.dev/docs/getting-started
+- CLI Reference: https://getzil.dev/docs/cli
+- SDK Reference: https://getzil.dev/docs/sdk
+- LLM Adapters: https://getzil.dev/docs/adapters/llm
+- Identity & Guardrails: https://getzil.dev/docs/identity/guardrails
+- Evaluation: https://getzil.dev/docs/evals
+- Observability: https://getzil.dev/docs/observability
+- Changelog: https://getzil.dev/docs/changelog
+
+## Links
+
+- Website: https://getzil.dev
+- GitHub: https://github.com/fluentdata-co/zil
+- PyPI: https://pypi.org/project/zil-ai/
+- License: Apache-2.0

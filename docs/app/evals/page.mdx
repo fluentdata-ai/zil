@@ -1,0 +1,288 @@
+# Evaluation
+
+The eval suite defines pre-deployment quality gates for your agent. Run evals standalone with `zil eval run` or as an automatic gate during `zil pack`.
+
+Zil uses an **adapter pattern** for evaluation — [DeepEval](https://github.com/confident-ai/deepeval) is the default engine, providing both deterministic assertions and LLM-as-judge metrics. The framework is selected in `evals/config.yaml`.
+
+## Creating test cases
+
+Zil provides **four ways** to build eval test cases, from manual to fully automated:
+
+| Method | Command | Best for |
+|--------|---------|----------|
+| **Write by hand** | Edit `evals/cases/*.yaml` | Precise, regression-specific cases |
+| **Interactive builder** | `zil eval add` | Chat with the agent, approve responses as golden cases |
+| **Session recording** | `zil eval record` | Capture a natural conversation and convert it into cases |
+| **LLM generation** | `zil eval generate` | Bootstrap a test suite from your agent's identity files |
+
+### Interactive builder — `zil eval add`
+
+Chat with your agent one message at a time. After each response, decide whether it should pass, tag keywords, and choose metrics. Cases are saved immediately.
+
+```bash
+zil eval add --group accuracy
+```
+
+```
+You: What is Zil?
+Running agent...
+
+Agent: Zil is an open-source framework by FluentData for building production AI agents.
+
+Should this response pass? [Y/n]: y
+Expected keywords (comma-separated, or empty): framework, agent, FluentData
+Metrics (comma-separated, or empty for deterministic-only): answer_relevancy
+✓ Case saved (1 total)
+
+Add another? [Y/n]:
+```
+
+### Session recording — `zil eval record`
+
+Have a natural conversation with the agent. When you're done, review the transcript and pick which turns become eval cases. Keywords are auto-detected from responses.
+
+```bash
+zil eval record --group regression
+```
+
+```
+Recording session — chat with your agent.
+Type /done or press Ctrl+D to finish.
+
+You: How do I create a new agent?
+Agent: Run `zil init my-agent` to scaffold a new project...
+
+You: What LLM providers are supported?
+Agent: Zil supports Gemini, Anthropic, OpenAI, and Vertex AI...
+
+You: /done
+
+Recorded 2 turn(s). Reviewing...
+
+  1. You: How do I create a new agent?
+     Agent: Run `zil init my-agent` to scaffold a new project...
+     Include as eval case? [Y/n]: y
+     Auto-detected keywords: agent, scaffold, project
+     Edit keywords (comma-separated, or Enter to keep): zil init, scaffold, project
+
+✓ 2 case(s) saved to cases/regression.yaml
+```
+
+### LLM generation — `zil eval generate`
+
+The judge LLM reads your agent's `identity/` files (persona, instructions, guardrails) and synthesizes diverse test cases automatically. Review each one before saving.
+
+```bash
+# Generate 20 cases focused on guardrails
+zil eval generate --count 20 --category guardrails
+
+# Generate and save all without review
+zil eval generate --no-review --count 15 --group edge-cases
+```
+
+All three methods **auto-register** new case files in the suite YAML — no manual wiring needed.
+
+## Engine configuration
+
+```yaml
+# evals/config.yaml
+eval_engine:
+  framework: deepeval
+  judge:
+    # LLM used for evaluation scoring (separate from agent LLM)
+    provider: gemini
+    model: gemini-2.0-flash
+    api_key_env: GOOGLE_API_KEY
+
+  # Per-metric pass thresholds (override defaults)
+  metric_thresholds:
+    answer_relevancy: 0.7
+    hallucination: 0.9
+    faithfulness: 0.8
+
+  # Execution controls
+  execution:
+    concurrency: 3    # parallel case evaluations
+    retries: 2        # retry on transient errors
+    timeout: 30       # per-case timeout (seconds)
+```
+
+The judge LLM is intentionally **decoupled** from the agent's own LLM — it scores the agent's output independently.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `eval_engine.framework` | string | `deepeval` | Adapter to use |
+| `eval_engine.judge.provider` | string | `gemini` | LLM provider for scoring |
+| `eval_engine.judge.model` | string | `gemini-2.0-flash` | Model name for the judge |
+| `eval_engine.judge.api_key_env` | string | `GOOGLE_API_KEY` | Env var holding the API key |
+| `eval_engine.metric_thresholds` | map | `{}` | Per-metric pass thresholds (0.0–1.0) |
+| `eval_engine.execution.concurrency` | int | `1` | Max parallel case evaluations |
+| `eval_engine.execution.retries` | int | `0` | Retry count on transient errors |
+| `eval_engine.execution.timeout` | int | `60` | Per-case timeout in seconds |
+
+## Suite definition
+
+```yaml
+# evals/baseline.yaml
+eval_suite:
+  name: baseline
+  pass_threshold: 0.85
+  metrics:
+    - answer_relevancy
+  cases:
+    - file: ./cases/accuracy.yaml
+      weight: 0.5
+    - file: ./cases/tool_use.yaml
+      weight: 0.3
+    - file: ./cases/escalation.yaml
+      weight: 0.2
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `eval_suite.name` | string | Yes | Suite identifier |
+| `eval_suite.pass_threshold` | float | Yes | Minimum weighted score to pass (0.0–1.0) |
+| `eval_suite.metrics` | string[] | No | LLM-as-judge metrics applied to all cases by default |
+| `eval_suite.cases[].file` | string | Yes | Path to the eval case file |
+| `eval_suite.cases[].weight` | float | Yes | Weight in the overall score (should sum to 1.0) |
+
+## Writing eval cases
+
+Each case file is a YAML document with test inputs and expected outputs:
+
+### Accuracy cases
+
+```yaml
+# evals/cases/accuracy.yaml
+name: accuracy
+cases:
+  - input: "What is Zil?"
+    expected_output: "Zil is a framework for production AI agents"
+    expected_contains:
+      - "framework"
+      - "agent"
+    context:
+      - "Zil is an open-source framework by FluentData for building production AI agents"
+  - input: "Hello"
+    expected_contains:
+      - "hello"
+    metrics: []  # deterministic only — no LLM judge needed
+```
+
+### Tool use cases
+
+```yaml
+# evals/cases/tool_use.yaml
+name: tool_use
+cases:
+  - input: "Look up order #12345"
+    expected_tool: lookup_order
+    expected_contains:
+      - "order"
+```
+
+### Escalation cases
+
+```yaml
+# evals/cases/escalation.yaml
+name: escalation
+cases:
+  - input: "I want to talk to a human"
+    expected_action: escalate
+  - input: "This is urgent, connect me to a manager"
+    expected_action: escalate
+```
+
+## Case fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `input` | string | The user message to test |
+| `expected_output` | string | Full expected response (for semantic comparison) |
+| `expected_contains` | string[] | Strings that must appear in the agent's response |
+| `expected_tool` | string | Tool name the agent should invoke |
+| `expected_action` | string | Action the agent should take (e.g., `escalate`) |
+| `context` | string[] | Ground-truth context (for faithfulness/hallucination metrics) |
+| `metrics` | string[] | Per-case metric override (empty `[]` = deterministic only) |
+
+## Available metrics
+
+When using the DeepEval adapter, these LLM-as-judge metrics are available:
+
+| Metric | What it measures |
+|--------|-----------------|
+| `answer_relevancy` | Is the response relevant to the input? |
+| `hallucination` | Does the response contain fabricated information? |
+| `faithfulness` | Is the response grounded in the provided context? |
+| `contextual_relevancy` | Is the retrieved context relevant to the query? |
+| `toxicity` | Does the response contain harmful content? |
+| `bias` | Does the response exhibit bias? |
+
+## How scoring works
+
+Each case is scored pass/fail. The suite score is:
+
+```
+suite_score = Σ (case_group_pass_rate × weight)
+```
+
+If `suite_score >= pass_threshold`, the suite passes.
+
+## Running evals
+
+### `zil eval run`
+
+```bash
+# Run the baseline suite
+zil eval run
+
+# Verbose output with per-case details
+zil eval run --verbose
+
+# JSON output for CI pipelines
+zil eval run --json-output
+
+# Override threshold
+zil eval run --threshold 0.9
+
+# Run a specific suite
+zil eval run --suite regression
+```
+
+### As a pack gate
+
+```bash
+# Normal: runs evals, gates on threshold
+zil pack
+
+# Development: skip evals (warns loudly)
+zil pack --skip-evals
+```
+
+When evals fail:
+
+```
+→ Running pre-flight evals...    ✗ 72.1% (threshold: 85%)
+Error: Eval suite failed. Fix eval failures before packaging.
+```
+
+## Installation
+
+The eval engine requires the `[eval]` optional extra:
+
+```bash
+pip install 'zil-ai[eval]'
+```
+
+For deterministic-only evals (`expected_contains`, `expected_tool`, `expected_action`), no additional dependencies are needed beyond the base `zil-ai` package.
+
+## Best practices
+
+- **Start with 3–5 cases** per category, expand as you find edge cases
+- **Weight accuracy highest** — it's the most fundamental quality signal
+- **Add cases for every production bug** — turn incidents into regression tests
+- **Keep the threshold at 0.85** unless you have a strong reason to change it
+- **Use `context` fields** for faithfulness metrics — the judge needs ground truth
+- **Override metrics per-case** with `metrics: []` for simple deterministic checks
+- **Never use `--skip-evals` in CI** — it exists for local development only
+- **Use `--json-output`** in CI pipelines for machine-readable results

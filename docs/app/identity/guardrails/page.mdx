@@ -1,0 +1,251 @@
+# Guardrails
+
+Guardrails define rules the agent must follow. They live at `identity/guardrails.yaml` and combine **runtime-enforced checks** (regex pattern matching before and after the LLM) with **LLM instruction rules** (passed to the system prompt).
+
+## Configuration
+
+```yaml
+# identity/guardrails.yaml
+
+# --- Runtime-enforced rules (checked by the GuardrailEngine) ---
+
+# Detection toggles (built-in pattern libraries)
+detection:
+  prompt_injection: true   # block common jailbreak patterns (10 patterns)
+  pii_output: true         # block SSN/credit card in agent output
+  pii_input: false         # optionally scan user input for PII
+
+# Custom regex patterns
+blocked_patterns:
+  - name: internal_urls
+    pattern: "https?://internal\\."
+    target: output          # "input" | "output" | "both"
+    severity: block         # "block" | "warn" | "log"
+
+# Keyword-based topic blocking (checked on input)
+denied_topics:
+  - "competitor pricing"
+  - "salary information"
+
+# Output length enforcement
+output_constraints:
+  max_response_length: 4000
+
+# --- LLM instruction rules (not runtime-enforced) ---
+
+hard_blocks:
+  - topic: illegal_activity
+    description: Refuse requests for illegal activities.
+  - topic: personal_data_extraction
+    description: Never extract or store personal data beyond the session.
+
+escalation_triggers:
+  - condition: user_requests_human
+    action: escalate
+    message: "Connecting you with a human agent."
+  - condition: confidence_below_threshold
+    threshold: 0.3
+    action: escalate
+    message: "I'm not confident in my answer. Let me connect you with a specialist."
+```
+
+## Runtime engine
+
+The `GuardrailEngine` runs regex-based checks on every input (before the LLM) and output (after the LLM). It's loaded automatically by `zil.create_agent()` and attached to the agent as `agent._zil_guardrails`.
+
+### Built-in detection
+
+When `detection.prompt_injection: true`, the engine checks input against 10 patterns covering:
+
+- Ignore/disregard instructions
+- DAN jailbreak attempts
+- System prompt override and extraction
+- XML/instruction tag injection
+- Rule override attempts
+- Instruction extraction via questions
+- Task override attempts
+
+When `detection.pii_output: true`, the engine checks output for SSN and credit card patterns. Set `detection.pii_input: true` to also scan user input.
+
+### Custom patterns
+
+Add project-specific regex patterns via `blocked_patterns`:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Pattern identifier |
+| `pattern` | string | Yes | Regex pattern |
+| `target` | string | Yes | `input`, `output`, or `both` |
+| `severity` | string | Yes | `block` (reject), `warn` (log + allow), or `log` (allow) |
+
+### Denied topics
+
+Simple keyword matching on user input. If any keyword appears (case-insensitive), the input is blocked.
+
+### Output constraints
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `max_response_length` | integer | No | Maximum characters per response |
+
+## SDK API
+
+```python
+from zil.sdk.guardrails import GuardrailEngine
+
+engine = GuardrailEngine.from_config(guardrails_dict)
+
+# Check user input before sending to LLM
+result = engine.check_input(user_message)
+if result.blocked:
+    return "I can't help with that."
+
+# Check agent output before returning to user
+result = engine.check_output(agent_response)
+if result.blocked:
+    return "[redacted]"
+```
+
+`GuardrailResult` fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `passed` | bool | `True` if no blocking violations |
+| `blocked` | bool | `True` if action is `block` |
+| `action` | str | `allow`, `block`, or `warn` |
+| `violations` | list | List of `Violation` objects with `rule`, `description`, `severity`, `matched_text` |
+
+### OTel integration
+
+When a tracer is active, `GuardrailCallback` emits spans:
+- `guardrail.check.input` — with violation attributes
+- `guardrail.check.output` — with violation attributes
+
+## LLM instruction rules
+
+These sections are **not** runtime-enforced. They are converted to natural-language directives and included in the system prompt.
+
+### `hard_blocks[]`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `topic` | string | Yes | Identifier for the blocked topic |
+| `description` | string | Yes | Human-readable explanation of the block |
+
+### `escalation_triggers[]`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `condition` | string | Yes | Trigger condition identifier |
+| `action` | string | Yes | Action to take (`escalate`) |
+| `message` | string | No | Message shown to the user during escalation |
+| `threshold` | float | No | Numeric threshold for conditions like `confidence_below_threshold` |
+
+## Security audit
+
+Use `zil audit` to assess your guardrail configuration:
+
+```bash
+zil audit           # full security report
+zil audit --fix     # with remediation suggestions
+```
+
+See [CLI Reference — zil audit](/cli#zil-audit) for details.
+
+## Identity directory
+
+Guardrails are one of three required files in the `identity/` directory:
+
+```
+identity/
+├── persona.md         # Who the agent is (markdown)
+├── instructions.md    # How the agent behaves (markdown)
+└── guardrails.yaml    # Hard rules (structured YAML)
+```
+
+All three files are required when the `spec.identity` field is present in the manifest. `zil validate` checks for their existence and validates `guardrails.yaml` structure.
+
+## How the SDK uses identity files
+
+When you call `zil.create_agent()`, the SDK:
+
+1. **Loads the runtime engine** from `guardrails.yaml` — attaches as `agent._zil_guardrails` for input/output checking
+2. **Composes a system prompt** from all three identity files:
+   - `persona.md` — included as-is
+   - `instructions.md` — included as-is
+   - `guardrails.yaml` → `hard_blocks` and `escalation_triggers` converted to natural-language directives
+
+You can disable the runtime engine with `enable_guardrails=False`:
+
+```python
+agent = zil.create_agent(enable_guardrails=False)
+```
+
+See [SDK Reference](/sdk) for all options.
+
+## Examples
+
+### Financial agent (strict)
+
+```yaml
+detection:
+  prompt_injection: true
+  pii_output: true
+  pii_input: true    # financial data is sensitive
+
+blocked_patterns:
+  - name: account_numbers
+    pattern: '\b\d{10,12}\b'
+    target: output
+    severity: block
+
+denied_topics:
+  - "competitor pricing"
+  - "investment advice"
+
+output_constraints:
+  max_response_length: 2000
+
+hard_blocks:
+  - topic: financial_advice
+    description: Never provide specific financial advice or recommendations.
+  - topic: legal_advice
+    description: Never provide specific legal counsel.
+
+escalation_triggers:
+  - condition: user_requests_human
+    action: escalate
+  - condition: regulatory_topic_detected
+    action: escalate
+    message: "This topic requires human review. Connecting you now."
+```
+
+### Internal helpdesk agent
+
+```yaml
+detection:
+  prompt_injection: true
+  pii_output: true
+
+blocked_patterns:
+  - name: internal_urls
+    pattern: "https?://internal\\."
+    target: output
+    severity: block
+
+denied_topics: []
+
+output_constraints:
+  max_response_length: 3000
+
+hard_blocks:
+  - topic: external_data_sharing
+    description: Never share internal company data outside the organization.
+
+escalation_triggers:
+  - condition: user_requests_human
+    action: escalate
+  - condition: confidence_below_threshold
+    threshold: 0.5
+    action: escalate
+```

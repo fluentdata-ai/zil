@@ -1,0 +1,111 @@
+# Zil Documentation
+
+Zil is a framework for building, validating, packaging, and deploying production AI agents.
+It composes with [ADK](https://google.github.io/adk-docs/), [A2A](https://google.github.io/A2A/),
+[MCP](https://modelcontextprotocol.io/), [DeepEval](https://github.com/confident-ai/deepeval),
+and [OpenTelemetry](https://opentelemetry.io/).
+
+## Install
+
+```bash
+pip install zil-ai
+```
+
+This gives you the `zil` CLI and the Python SDK. For agent creation with ADK:
+
+```bash
+pip install 'zil-ai[adk]'
+```
+
+## What Zil provides
+
+| Component | Description |
+|-----------|-------------|
+| **Manifest schema** | A declarative YAML format (`manifest.yaml`) describing your agent's runtime, identity, skills, evals, and observability |
+| **`zil init`** | Scaffolds a working agent project in under 30 seconds |
+| **`zil validate`** | Validates your project against the spec |
+| **`zil audit`** | Agent-native security audit — injection resilience, output leakage, identity hardening |
+| **`zil eval`** | Run, generate, and record evaluation suites |
+| **`zil pack`** | Builds a versioned `.zil` archive — a portable agent artifact |
+| **`zil inspect`** | Reads a `.zil` archive without extracting it |
+| **`zil push`** | Push `.zil` archives to an OCI-compatible registry |
+| **`zil run`** | Runs your agent interactively (wraps `adk run`) |
+| **`zil web`** | Starts the ADK web UI for testing |
+| **`zil deploy`** | Deploy to Google Cloud Run with eval gating |
+| **`zil.create_agent()`** | Python SDK — reads your manifest and identity files, returns a wired ADK agent |
+
+## Quick start
+
+```bash
+# Scaffold a new agent project (creates venv and installs deps)
+zil init my-agent
+cd my-agent && source .venv/bin/activate
+
+# Validate the project
+zil validate
+
+# Run the agent interactively
+zil run
+
+# Or start the ADK web UI
+zil web
+```
+
+The generated `my_agent/agent.py` wires everything automatically via the SDK:
+
+```python
+import zil
+
+root_agent = zil.create_agent(
+    tools=[],  # add your tool functions here
+)
+```
+
+See [SDK Reference](/sdk) for the full API.
+
+## Project layout
+
+A Zil agent project follows a standard directory structure:
+
+```
+my-agent/
+├── manifest.yaml          # Zil agent manifest (the contract)
+├── my_agent/              # ADK agent module
+│   ├── __init__.py
+│   ├── agent.py           # Agent entry point
+│   └── .env.example       # API key template
+├── adapters/              # LLM and embedding configuration
+│   ├── llm.yaml
+│   └── embed.yaml
+├── identity/              # Agent persona, instructions, guardrails
+│   ├── persona.md
+│   ├── instructions.md
+│   └── guardrails.yaml
+├── evals/                 # Evaluation suite
+│   ├── baseline.yaml
+│   └── cases/
+├── observability/         # OpenTelemetry configuration
+│   └── config.yaml
+├── Dockerfile             # Container build
+└── .github/workflows/     # CI/CD pipeline
+```
+
+## Guiding principles
+
+1. **Built on what exists.** Zil composes with ADK, A2A, MCP, DeepEval, and OpenTelemetry. We do not reinvent agent orchestration, tool protocols, evaluation, or telemetry.
+2. **Declarative-first.** The manifest is the contract. The CLI is a thin wrapper that reads, validates, and packages manifests.
+3. **No new runtime.** Agents run on whatever infrastructure you already have — Cloud Run, Bedrock, Foundry, Kubernetes.
+4. **No new registry.** Zil uses OCI-compatible registries you already have — Artifact Registry, ECR, GHCR, JFrog.
+
+## Community
+
+- [Slack](https://join.slack.com/t/zilorg/shared_invite/zt-3xye83sw1-cU3H1Hb_yFbmyBBgbt5VGQ) — join the Zil community for questions, feedback, and discussion
+- [GitHub Discussions](https://github.com/fluentdata-co/zil/discussions) — ask questions and share ideas
+- [Issues](https://github.com/fluentdata-co/zil/issues) — report bugs or request features
+
+## Next steps
+
+- [Getting Started](/getting-started) — full walkthrough from install to deployed agent
+- [SDK Reference](/sdk) — `zil.create_agent()` API documentation
+- [CLI Reference](/cli) — detailed command documentation
+- [GitHub](https://github.com/fluentdata-co/zil) — source code and issue tracker

@@ -1,0 +1,498 @@
+"""zil deploy — deploy the agent to Cloud Run."""
+
+import os
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Any
+
+import click
+import yaml
+from rich.console import Console
+from rich.prompt import Prompt
+
+console = Console()
+
+
+def _resolve_module(project_dir: Path) -> str:
+    """Derive the ADK module name from the manifest."""
+    manifest_path = project_dir / "manifest.yaml"
+    if not manifest_path.is_file():
+        console.print(
+            "[red]Error:[/red] manifest.yaml not found."
+        )
+        raise SystemExit(1)
+
+    with open(manifest_path, encoding="utf-8") as f:
+        manifest = yaml.safe_load(f)
+
+    name = manifest.get("metadata", {}).get("name", "")
+    if not name:
+        console.print(
+            "[red]Error:[/red] metadata.name is missing in manifest.yaml."
+        )
+        raise SystemExit(1)
+
+    return name
+
+
+def _resolve_module_dir(project_dir: Path, agent_name: str) -> str:
+    """Get the Python module directory name (snake_case)."""
+    return agent_name.replace("-", "_")
+
+
+def _check_gcloud() -> bool:
+    """Check if gcloud CLI is available."""
+    if not shutil.which("gcloud"):
+        console.print(
+            "[red]Error:[/red] gcloud CLI not found. "
+            "Install it: https://cloud.google.com/sdk/docs/install"
+        )
+        return False
+    return True
+
+
+def _resolve_gcp_project(project_flag: str | None) -> str | None:
+    """Resolve GCP project from flag → env → gcloud config."""
+    if project_flag:
+        return project_flag
+
+    env_project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+    if env_project:
+        return env_project
+
+    try:
+        result = subprocess.run(
+            ["gcloud", "config", "get-value", "project"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    return None
+
+
+def _resolve_gcp_region(region_flag: str | None) -> str | None:
+    """Resolve GCP region from flag → env."""
+    if region_flag:
+        return region_flag
+
+    env_region = os.environ.get("GOOGLE_CLOUD_REGION")
+    if env_region:
+        return env_region
+
+    return None
+
+
+def _run_eval_gate(project_dir: Path) -> None:
+    """Run evals and block deploy on failure."""
+    try:
+        from zil.sdk.eval import run_eval_suite
+
+        console.print("→ Running pre-deploy eval check...")
+        result = run_eval_suite(project_dir=project_dir)
+        if not result.passed:
+            console.print(
+                f"[red]✗[/red] Eval suite failed: "
+                f"{result.score:.1%} (threshold: {result.threshold:.1%}). "
+                "Deploy blocked. Use [bold]--skip-evals[/bold] to override."
+            )
+            raise SystemExit(1)
+        console.print(
+            f"[green]✓[/green] Evals passed: {result.score:.1%}"
+        )
+    except SystemExit:
+        raise
+    except Exception as e:
+        console.print(
+            f"[yellow]⚠ Warning:[/yellow] Could not run evals: {e}. "
+            "Proceeding with deploy."
+        )
+
+
+def _resolve_env_vars(
+    manifest: dict[str, Any],
+    env_file: Path | None,
+) -> dict[str, str]:
+    """Resolve env var values from --env-file or interactive prompts.
+
+    Returns a dict of {VAR_NAME: value} for all declared vars.
+    """
+    env_declarations: list[dict[str, Any]] = (
+        manifest.get("spec", {}).get("env") or []
+    )
+    if not env_declarations:
+        return {}
+
+    # Load values from env file if provided
+    file_values: dict[str, str] = {}
+    if env_file:
+        if not env_file.is_file():
+            console.print(
+                f"[red]Error:[/red] Env file not found: {env_file}"
+            )
+            raise SystemExit(1)
+        file_values = _parse_env_file(env_file)
+
+    resolved: dict[str, str] = {}
+    missing_required: list[str] = []
+
+    for decl in env_declarations:
+        name = decl.get("name", "")
+        if not name:
+            continue
+        required = decl.get("required", True)
+        default = decl.get("default")
+        is_secret = decl.get("secret", False)
+        description = decl.get("description", "")
+
+        # Resolution order: env file → interactive prompt
+        value = file_values.get(name)
+
+        if value is None and not env_file:
+            # Interactive prompt
+            prompt_text = f"  {name}"
+            if description:
+                prompt_text += f" ({description})"
+            if default:
+                prompt_text += f" [default: {default}]"
+
+            value = Prompt.ask(
+                prompt_text,
+                default=default or "",
+                password=is_secret,
+                console=console,
+            )
+            if value == "":
+                value = None
+
+        # Apply default if still None
+        if value is None and default:
+            value = default
+
+        if value:
+            resolved[name] = value
+        elif required:
+            missing_required.append(name)
+
+    if missing_required:
+        console.print(
+            "[red]Error:[/red] Missing required env vars: "
+            + ", ".join(missing_required)
+        )
+        raise SystemExit(1)
+
+    return resolved
+
+
+def _parse_env_file(env_file: Path) -> dict[str, str]:
+    """Parse a dotenv-style file into a dict."""
+    values: dict[str, str] = {}
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip()
+        # Strip surrounding quotes
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
+            val = val[1:-1]
+        values[key] = val
+    return values
+
+
+def _deploy_cloud_run(
+    project_dir: Path,
+    agent_name: str,
+    module_dir: str,
+    project: str,
+    region: str,
+    service: str | None,
+    trace: bool,
+    with_ui: bool,
+    env_vars: dict[str, str] | None = None,
+) -> None:
+    """Deploy to Cloud Run via adk deploy cloud_run."""
+    if not shutil.which("adk"):
+        console.print(
+            "[red]Error:[/red] adk CLI not found. "
+            "Install it with: [bold]pip install 'zil-ai\\[adk]'[/bold]"
+        )
+        raise SystemExit(1)
+
+    service_name = service or agent_name
+    module_path = project_dir / module_dir
+
+    # ADK deploy cloud_run only copies the module dir. Copy project files
+    # (manifest, identity, adapters, observability) so zil.create_agent()
+    # can find them at runtime.
+    _copied_artifacts: list[Path] = []
+    _copy_targets = [
+        ("manifest.yaml", None),
+        ("identity", None),
+        ("adapters", None),
+        ("observability", None),
+    ]
+    for name, _ in _copy_targets:
+        src = project_dir / name
+        dst = module_path / name
+        if src.exists() and not dst.exists():
+            if src.is_file():
+                shutil.copy2(src, dst)
+            else:
+                shutil.copytree(src, dst)
+            _copied_artifacts.append(dst)
+
+    cmd = [
+        "adk", "deploy", "cloud_run",
+        f"--project={project}",
+        f"--region={region}",
+        f"--service_name={service_name}",
+    ]
+
+    if trace:
+        cmd.append("--otel_to_cloud")
+
+    if with_ui:
+        cmd.append("--with_ui")
+
+    # The agent path is the module directory
+    cmd.append(str(module_path))
+
+    # Inject env vars via gcloud -- separator
+    if env_vars:
+        env_pairs = ",".join(f"{k}={v}" for k, v in env_vars.items())
+        cmd.append("--")
+        cmd.append(f"--set-env-vars={env_pairs}")
+
+    console.print(
+        f"→ Deploying [bold]{agent_name}[/bold] to Cloud Run "
+        f"(project={project}, region={region})..."
+    )
+
+    try:
+        result = subprocess.call(cmd)
+    finally:
+        # Clean up copied artifacts to avoid polluting the source tree
+        for artifact in _copied_artifacts:
+            if artifact.is_file():
+                artifact.unlink()
+            elif artifact.is_dir():
+                shutil.rmtree(artifact)
+
+    if result != 0:
+        console.print("[red]Error:[/red] Cloud Run deployment failed.")
+        raise SystemExit(1)
+
+    console.print(
+        f"\n[green]✓[/green] Deployed [bold]{service_name}[/bold] "
+        f"to Cloud Run."
+    )
+    if trace:
+        console.print(
+            "  Traces: Google Cloud Console → Trace Explorer"
+        )
+
+
+@click.command()
+@click.option(
+    "--project-dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=".",
+    help="Project directory (default: current directory).",
+)
+@click.option(
+    "--project", "gcp_project",
+    type=str, default=None,
+    help="GCP project (or GOOGLE_CLOUD_PROJECT env var).",
+)
+@click.option(
+    "--region", "gcp_region",
+    type=str, default=None,
+    help="GCP region (or GOOGLE_CLOUD_REGION env var).",
+)
+@click.option(
+    "--service",
+    type=str, default=None,
+    help="Cloud Run service name (default: agent name).",
+)
+@click.option(
+    "--with-ui", "with_ui",
+    is_flag=True, default=False,
+    help="Include ADK web UI in Cloud Run deploy.",
+)
+@click.option(
+    "--trace",
+    is_flag=True, default=False,
+    help="Enable Cloud Trace telemetry.",
+)
+@click.option(
+    "--skip-evals", "skip_evals",
+    is_flag=True, default=False,
+    help="Skip pre-deploy eval check.",
+)
+@click.option(
+    "--from", "from_ref",
+    type=str, default=None,
+    help="Deploy from a .zil archive or OCI registry reference.",
+)
+@click.option(
+    "--env-file", "env_file",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Dotenv file with env var values (alternative to interactive prompts).",
+)
+def deploy(
+    project_dir: Path,
+    gcp_project: str | None,
+    gcp_region: str | None,
+    service: str | None,
+    with_ui: bool,
+    trace: bool,
+    skip_evals: bool,
+    from_ref: str | None,
+    env_file: Path | None,
+) -> None:
+    """Deploy the agent to Cloud Run."""
+    # If --from is specified, deploy from artifact
+    if from_ref:
+        _deploy_from_artifact(
+            from_ref, gcp_project, gcp_region, service, trace, with_ui, env_file,
+        )
+        return
+
+    project_dir = project_dir.resolve()
+    agent_name = _resolve_module(project_dir)
+    module_dir = _resolve_module_dir(project_dir, agent_name)
+
+    # Verify module directory exists
+    if not (project_dir / module_dir).is_dir():
+        console.print(
+            f"[red]Error:[/red] Agent module directory "
+            f"'{module_dir}/' not found. Did you run [bold]zil init[/bold]?"
+        )
+        raise SystemExit(1)
+
+    # Pre-deploy eval gate (warn only)
+    if not skip_evals:
+        _run_eval_gate(project_dir)
+
+    # Cloud Run mode
+    if not _check_gcloud():
+        raise SystemExit(1)
+
+    project = _resolve_gcp_project(gcp_project)
+    if not project:
+        console.print(
+            "[red]Error:[/red] GCP project not specified. "
+            "Use --project, set GOOGLE_CLOUD_PROJECT, or run "
+            "`gcloud config set project <PROJECT_ID>`."
+        )
+        raise SystemExit(1)
+
+    region = _resolve_gcp_region(gcp_region)
+    if not region:
+        console.print(
+            "[red]Error:[/red] GCP region not specified. "
+            "Use --region or set GOOGLE_CLOUD_REGION."
+        )
+        raise SystemExit(1)
+
+    # Resolve env vars from manifest declarations
+    manifest_path = project_dir / "manifest.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text())
+    env_vars = _resolve_env_vars(manifest, env_file)
+    if env_vars:
+        count = len(env_vars)
+        console.print(f"[green]✓[/green] Resolved {count} env variable(s)")
+
+    _deploy_cloud_run(
+        project_dir, agent_name, module_dir,
+        project, region, service, trace, with_ui, env_vars,
+    )
+
+
+def _deploy_from_artifact(
+    from_ref: str,
+    gcp_project: str | None,
+    gcp_region: str | None,
+    service: str | None,
+    trace: bool,
+    with_ui: bool,
+    env_file: Path | None = None,
+) -> None:
+    """Deploy from a .zil archive or OCI registry reference."""
+    import tempfile
+
+    from zil.packaging.archive import extract_archive
+
+    # Determine if from_ref is a local file or registry reference
+    ref_path = Path(from_ref)
+    if ref_path.exists() and ref_path.suffix == ".zil":
+        archive_path = ref_path
+        console.print(f"→ Deploying from local archive: [bold]{archive_path.name}[/bold]")
+    else:
+        # Pull from registry
+        console.print(f"→ Pulling from registry: [bold]{from_ref}[/bold]")
+        from zil.packaging.registry import pull_archive
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix="zil-pull-"))
+        try:
+            archive_path = pull_archive(from_ref, tmp_dir)
+        except ImportError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            raise SystemExit(1)
+        except Exception as e:
+            console.print(f"[red]Error:[/red] Pull failed: {e}")
+            raise SystemExit(1)
+        console.print("[green]✓[/green] Pulled")
+
+    # Extract archive to temp directory
+    console.print("→ Extracting archive...")
+    extract_dir = Path(tempfile.mkdtemp(prefix="zil-deploy-"))
+    extract_archive(archive_path, extract_dir)
+    console.print("[green]✓[/green] Extracted")
+
+    # Resolve the project from extracted contents
+    project_dir = extract_dir
+    agent_name = _resolve_module(project_dir)
+    module_dir = _resolve_module_dir(project_dir, agent_name)
+
+    # Cloud Run deploy
+    if not _check_gcloud():
+        raise SystemExit(1)
+
+    project = _resolve_gcp_project(gcp_project)
+    if not project:
+        console.print(
+            "[red]Error:[/red] GCP project not specified. "
+            "Use --project, set GOOGLE_CLOUD_PROJECT, or run "
+            "`gcloud config set project <PROJECT_ID>`."
+        )
+        raise SystemExit(1)
+
+    region = _resolve_gcp_region(gcp_region)
+    if not region:
+        console.print(
+            "[red]Error:[/red] GCP region not specified. "
+            "Use --region or set GOOGLE_CLOUD_REGION."
+        )
+        raise SystemExit(1)
+
+    # Resolve env vars from manifest declarations
+    manifest_path = project_dir / "manifest.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text())
+    env_vars = _resolve_env_vars(manifest, env_file)
+    if env_vars:
+        count = len(env_vars)
+        console.print(f"[green]✓[/green] Resolved {count} env variable(s)")
+
+    _deploy_cloud_run(
+        project_dir, agent_name, module_dir,
+        project, region, service, trace, with_ui, env_vars,
+    )

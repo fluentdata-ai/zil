@@ -1,0 +1,92 @@
+# Getting Started
+
+Install Zil and run your first agent in five minutes.
+
+## Prerequisites
+
+- Python 3.11+
+- `pip` (or `pipx`)
+
+## 1. Install
+
+```bash
+pip install 'zil-ai[adk]'
+```
+
+Verify:
+
+```bash
+zil --version
+# zil, version 0.1.10
+```
+
+## 2. Create a project
+
+```bash
+zil init my-agent
+```
+
+The CLI prompts for your LLM provider (Gemini, Anthropic, OpenAI, or Vertex AI), then scaffolds the project, creates a virtual environment, and installs dependencies.
+
+Use `--non-interactive` to accept all defaults:
+
+```bash
+zil init my-agent --non-interactive
+```
+
+## 3. Configure your API key
+
+```bash
+cd my-agent
+source .venv/bin/activate
+cp my_agent/.env.example my_agent/.env
+```
+
+Edit `my_agent/.env` and add your API key. The default provider is **Gemini** — get a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+
+For other providers, see [Adapters — LLM](/adapters/llm).
+
+## 4. Run your agent
+
+```bash
+# Interactive CLI
+zil run
+
+# Or browser-based chat UI
+zil web
+```
+
+## 5. What to edit
+
+| File | Purpose |
+|------|---------|
+| `identity/persona.md` | Who the agent is |
+| `identity/instructions.md` | How the agent behaves |
+| `identity/guardrails.yaml` | Hard rules and boundaries |
+| `adapters/llm.yaml` | LLM provider and model |
+| `my_agent/agent.py` | Tools and logic |
+
+The generated `agent.py` uses one function to wire everything:
+
+```python
+import zil
+
+root_agent = zil.create_agent(
+    tools=[],  # add your tool functions here
+)
+```
+
+See [SDK Reference](/sdk) for all `create_agent()` options.
+
+## What's next
+
+| Goal | Command / Page |
+|------|---------------|
+| Validate your project | `zil validate` — [CLI Reference](/cli#zil-validate) |
+| Security audit | `zil audit` — [CLI Reference](/cli#zil-audit) |
+| Write and run evals | `zil eval` — [Evaluation](/evals) |
+| Test in Docker | `zil web --docker --trace` — [CLI Reference](/cli#zil-web) |
+| Package and publish | `zil pack` → `zil push` — [Packaging](/packaging) |
+| Deploy to Cloud Run | `zil deploy` — [CLI Reference](/cli#zil-deploy) |
+| Set up tracing | [Observability](/observability) |
+| Guardrails reference | [Identity — Guardrails](/identity/guardrails) |

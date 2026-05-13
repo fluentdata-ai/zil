@@ -1,0 +1,731 @@
+# CLI Reference
+
+The `zil` CLI provides ten commands for the agent development lifecycle.
+
+## `zil init`
+
+Scaffold a new Zil agent project.
+
+```bash
+zil init <name> [options]
+```
+
+### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `name` | Project name (kebab-case, 3–64 characters) |
+
+### Options
+
+| Option | Values | Default | Description |
+|--------|--------|---------|-------------|
+| `--llm` | `gemini`, `anthropic`, `openai`, `vertex` | `gemini` | LLM provider |
+| `--no-evals` | — | — | Skip eval suite scaffolding |
+| `--no-otel` | — | — | Skip OpenTelemetry instrumentation |
+| `--non-interactive` | — | — | Use defaults for all prompts |
+
+### Examples
+
+```bash
+# Interactive mode (prompts for LLM provider)
+zil init my-agent
+
+# Non-interactive with defaults
+zil init my-agent --non-interactive
+
+# Specify LLM provider directly
+zil init my-agent --llm vertex
+```
+
+### Generated files
+
+`zil init` produces a complete project with:
+
+- `manifest.yaml` — the Zil agent descriptor
+- `adapters/llm.yaml` — LLM provider configuration
+- `adapters/embed.yaml` — embedding provider configuration
+- `identity/persona.md` — agent persona
+- `identity/instructions.md` — behavior instructions
+- `identity/guardrails.yaml` — hard rules and constraints
+- `evals/config.yaml` — eval engine configuration (framework + judge LLM)
+- `evals/baseline.yaml` — eval suite definition
+- `evals/cases/` — example eval test cases
+- `observability/config.yaml` — OpenTelemetry configuration
+- `{module_name}/__init__.py` — Python package init
+- `{module_name}/agent.py` — agent entry point (uses [`zil.create_agent()`](/sdk))
+- `{module_name}/.env.example` — API key template
+- `Dockerfile` — multi-stage container build
+- `.github/workflows/zil-pipeline.yaml` — CI/CD pipeline
+- `README.md`, `.gitignore`, `requirements.txt`
+
+Where `{module_name}` is the agent name converted to snake_case (e.g., `my-agent` → `my_agent`).
+
+### Auto-install
+
+After scaffolding, `zil init` offers to create a `.venv` and install dependencies from `requirements.txt`. This includes `zil-ai[adk]` which pulls in the SDK and Google ADK.
+
+In `--non-interactive` mode, auto-install runs automatically.
+
+---
+
+## `zil validate`
+
+Validate a Zil agent project against the manifest schema.
+
+```bash
+zil validate [options]
+```
+
+### Options
+
+| Option | Values | Default | Description |
+|--------|--------|---------|-------------|
+| `--project-dir` | path | `.` | Project directory to validate |
+| `--format` | `text`, `json` | `text` | Output format |
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Valid — all checks passed |
+| `1` | Invalid — one or more errors |
+| `2` | Warnings only — valid but with recommendations |
+
+### What it checks
+
+1. **Schema validation** — `manifest.yaml` against the Zil v1 JSON Schema
+2. **Identity files** — `persona.md`, `instructions.md`, `guardrails.yaml` exist
+3. **Guardrails validation** — `guardrails.yaml` structure, enforceable rule count, regex validity, output protection warnings
+4. **Adapter references** — LLM and embedding adapter YAML files exist
+5. **Eval suite** — `baseline.yaml` and referenced case files exist
+6. **Observability config** — `config.yaml` exists, checks for recommended attributes
+7. **Environment variables** — `spec.env` declarations, adapter cross-references
+
+### Examples
+
+```bash
+# Validate current directory
+zil validate
+
+# Validate a specific directory
+zil validate --project-dir ./my-agent
+
+# JSON output for CI/CD pipelines
+zil validate --format=json
+```
+
+### JSON output
+
+```json
+{
+  "valid": true,
+  "exit_code": 0,
+  "errors": 0,
+  "warnings": 0,
+  "checks": [
+    { "status": "pass", "message": "manifest.yaml — schema valid" },
+    { "status": "pass", "message": "identity/persona.md — present" }
+  ]
+}
+```
+
+---
+
+## `zil audit`
+
+Run an agent-native security audit. Unlike generic dependency scanners, `zil audit` focuses exclusively on LLM agent-specific attack surfaces.
+
+```bash
+zil audit [options]
+```
+
+### Options
+
+| Option | Values | Default | Description |
+|--------|--------|---------|-------------|
+| `--project-dir` | path | `.` | Project directory to audit |
+| `--format` | `text`, `json` | `text` | Output format |
+| `--fix` | — | — | Show actionable fix suggestions |
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Pass — no critical findings or warnings |
+| `1` | Critical — one or more critical findings |
+| `2` | Warnings only — no critical findings but recommendations exist |
+
+### What it checks
+
+| Check | Description |
+|-------|-------------|
+| **Guardrail coverage** | Scores coverage across 5 dimensions: injection detection, PII output, PII input, output constraints, denied topics |
+| **Injection resilience** | Runs 20 adversarial prompts through the guardrail engine across 6 attack categories |
+| **Output leakage** | Checks if system prompt, persona, or instructions could leak through output undetected |
+| **Indirect injection surface** | AST-scans tool functions for external data ingestion (HTTP, DB, file reads) without guardrail filtering |
+| **Instruction consistency** | Detects contradictions between permissive persona language and restrictive guardrails |
+| **Context window risk** | Measures system prompt size as a percentage of the model's context window |
+| **Identity hardening** | Checks persona and instructions for anti-patterns (vague boundaries, missing refusals) |
+
+### Examples
+
+```bash
+# Audit the current project
+zil audit
+
+# Audit a specific project
+zil audit --project-dir ./my-agent
+
+# Show fix suggestions
+zil audit --fix
+
+# JSON output for CI/CD
+zil audit --format=json
+```
+
+### Sample output
+
+```
+╭─ Zil Security Audit ─────────────────────────────╮
+│ Project: my-agent  v1.0.0                          │
+╰───────────────────────────────────────────────────╯
+
+Guardrail Coverage ─────────────────────────────── 4/5
+  ✓ Prompt injection detection enabled
+  ✓ PII output detection enabled
+  · PII input detection disabled (optional)
+  ✓ Output constraints: max 4000 chars
+  ⚠ Denied topics: none configured
+
+Injection Resilience ──────────────────────────── 19/20
+  ✓ Ignore instructions (4/4)
+  ✓ DAN jailbreak (3/3)
+  ⚠ System prompt extraction (2/3) — 1 bypass
+  ✓ Tag injection (4/4)
+  ✓ Rule override (3/3)
+  ✓ Instruction forget (3/3)
+
+Output Leakage ─────────────────────────────────── PASS
+  ✓ System prompt not reproducible in output
+
+Indirect Injection Surface ─────────────────────── WARN
+  ⚠ tool: fetch_data() — returns external data (HTTP)
+  ✓ tool: calculate() — pure computation
+
+Instruction Consistency ────────────────────────── PASS
+  ✓ No contradictions between persona and guardrails
+
+Context Window Risk ────────────────────────────── PASS
+  ✓ System prompt: ~500 tokens (0.4% of 128,000 context)
+
+Identity Hardening ─────────────────────────────── PASS
+  ✓ Refusal boundaries — present
+  ✓ Scope definition — present
+  ✓ Response format — present
+
+Summary: 0 critical, 2 warnings
+```
+
+---
+
+## `zil pack`
+
+Build a `.zil` archive from a validated agent project.
+
+```bash
+zil pack [options]
+```
+
+### Options
+
+| Option | Values | Default | Description |
+|--------|--------|---------|-------------|
+| `--project-dir` | path | `.` | Project directory to package |
+| `--output-dir` | path | `dist/` | Output directory for the archive |
+| `--skip-evals` | — | — | Skip eval suite (warns loudly) |
+
+### What it does
+
+1. Validates the project (calls `zil validate` internally)
+2. Runs the eval suite — refuses to pack if below the pass threshold
+3. Generates an SBOM in CycloneDX 1.5 format
+4. Creates a tar.gz archive with the standard `.zil` layout
+
+### Archive structure
+
+```
+my-agent-1.0.0.zil
+├── manifest.yaml
+├── adapters/
+├── identity/
+├── evals/
+├── observability/
+├── {module_name}/
+├── BUILD_META.json
+├── SBOM.cyclonedx.json
+└── EVAL_RESULTS.json (if evals ran)
+```
+
+### Examples
+
+```bash
+# Package with all defaults
+zil pack
+
+# Skip evals during development
+zil pack --skip-evals
+
+# Custom output directory
+zil pack --output-dir ./artifacts
+```
+
+---
+
+## `zil inspect`
+
+Inspect a `.zil` archive without extracting it.
+
+```bash
+zil inspect <archive> [options]
+```
+
+### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `archive` | Path to the `.zil` file |
+
+### Options
+
+| Option | Values | Default | Description |
+|--------|--------|---------|-------------|
+| `--show` | file path | — | Print a specific file from the archive |
+| `--json` | — | — | Machine-readable JSON output |
+
+### Examples
+
+```bash
+# Summary view
+zil inspect dist/my-agent-1.0.0.zil
+
+# Show a specific file
+zil inspect dist/my-agent-1.0.0.zil --show manifest.yaml
+zil inspect dist/my-agent-1.0.0.zil --show identity/persona.md
+
+# JSON output for CI/CD
+zil inspect dist/my-agent-1.0.0.zil --json
+```
+
+### Output
+
+```
+Zil Package: my-agent
+  Version:     1.0.0
+  Description: A customer support agent.
+  Framework:   adk (python)
+  Created:     2026-05-07T22:37:15+00:00
+  Size:        0.1 MB
+
+  SBOM:        5 dependencies
+  Evals:       96.0% (passed)
+
+               Components
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┓
+┃ Component           ┃ Files ┃   Size ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━┩
+│ adapters/           │     2 │  305 B │
+│ identity/           │     3 │ 1.4 KB │
+│ manifest.yaml       │     1 │  502 B │
+│ my_agent/           │     4 │ 1.0 KB │
+│ SBOM.cyclonedx.json │     1 │ 1.0 KB │
+└─────────────────────┴───────┴────────┘
+```
+
+---
+
+## `zil push`
+
+Push a `.zil` archive to an OCI-compatible registry.
+
+```bash
+zil push <archive> --registry <url>
+```
+
+### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `archive` | Path to the `.zil` file |
+
+### Options
+
+| Option | Values | Default | Description |
+|--------|--------|---------|-------------|
+| `--registry` | URL | — | OCI registry URL (required) |
+
+### Supported registries
+
+- Google Artifact Registry
+- GitHub Container Registry (GHCR)
+- Amazon ECR
+- Docker Hub
+- Any OCI-compatible registry
+
+### Authentication
+
+Uses ambient credentials:
+- `gcloud auth configure-docker` for Artifact Registry
+- `docker login` for Docker Hub / GHCR
+- Environment variables (`ORAS_*`) for custom setups
+
+### Examples
+
+```bash
+# Push to Google Artifact Registry
+zil push dist/my-agent-1.0.0.zil \
+  --registry us-docker.pkg.dev/my-project/agents
+
+# Push to GHCR
+zil push dist/my-agent-1.0.0.zil \
+  --registry ghcr.io/my-org/agents
+```
+
+The resulting reference is `<registry>/<agent-name>:<version>`, e.g.:
+`us-docker.pkg.dev/my-project/agents/my-agent:1.0.0`
+
+---
+
+## `zil eval`
+
+Agent evaluation command group — run suites, add cases, record sessions, generate tests.
+
+```bash
+zil eval <subcommand> [options]
+```
+
+### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `run` | Run the evaluation suite against the agent |
+| `add` | Interactively create eval cases by chatting with the agent |
+| `record` | Record a chat session and convert turns into eval cases |
+| `generate` | Use the judge LLM to synthesize eval cases from agent identity |
+
+### `zil eval run`
+
+| Option | Values | Default | Description |
+|--------|--------|---------|-------------|
+| `--project-dir` | path | `.` | Project directory |
+| `--suite` | string | `baseline` | Suite to run |
+| `--verbose` / `-v` | — | — | Show per-case details |
+| `--json-output` | — | — | Output results as JSON (for CI) |
+| `--threshold` | float | — | Override pass threshold |
+
+### `zil eval add`
+
+| Option | Values | Default | Description |
+|--------|--------|---------|-------------|
+| `--project-dir` | path | `.` | Project directory |
+| `--group` | string | `accuracy` | Target case group name |
+| `--suite` | string | `baseline` | Suite to register the group in |
+
+### `zil eval record`
+
+| Option | Values | Default | Description |
+|--------|--------|---------|-------------|
+| `--project-dir` | path | `.` | Project directory |
+| `--group` | string | `recorded` | Target case group name |
+| `--suite` | string | `baseline` | Suite to register the group in |
+| `--auto-accept` | — | — | Save all turns without per-turn confirmation |
+
+### `zil eval generate`
+
+| Option | Values | Default | Description |
+|--------|--------|---------|-------------|
+| `--project-dir` | path | `.` | Project directory |
+| `--count` / `-n` | int | `10` | Number of cases to generate |
+| `--group` | string | `generated` | Target case group name |
+| `--suite` | string | `baseline` | Suite to register the group in |
+| `--category` | string | — | Focus area (e.g. accuracy, guardrails, edge-cases) |
+| `--no-review` | — | — | Save all generated cases without review |
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Suite passed (for `run`) / command completed |
+| `1` | Suite failed or error |
+
+### Examples
+
+```bash
+# Run baseline eval suite
+zil eval run
+
+# Verbose with per-case details
+zil eval run --verbose
+
+# JSON output for CI
+zil eval run --json-output
+
+# Interactive case builder
+zil eval add --group edge-cases
+
+# Record a session
+zil eval record --auto-accept
+
+# Generate cases from identity
+zil eval generate --count 20 --category guardrails --no-review
+```
+
+### JSON output (from `zil eval run --json-output`)
+
+```json
+{
+  "suite": "baseline",
+  "score": 0.92,
+  "passed": true,
+  "threshold": 0.85,
+  "total_cases": 5,
+  "passed_cases": 5,
+  "failed_cases": 0,
+  "groups": [
+    {
+      "name": "accuracy",
+      "pass_rate": 1.0,
+      "weight": 0.5,
+      "cases": [...]
+    }
+  ]
+}
+```
+
+---
+
+## `zil run`
+
+Run the agent interactively in the terminal. Wraps `adk run` with automatic module detection.
+
+```bash
+zil run [options]
+```
+
+### Options
+
+| Option | Values | Default | Description |
+|--------|--------|---------|-------------|
+| `--project-dir` | path | `.` | Project directory |
+| `--trace` | — | — | Enable OTLP trace export to the configured endpoint |
+| `--trace-console` | — | — | Print spans to stderr (no collector needed) |
+
+### How it works
+
+1. Reads `manifest.yaml` to get the agent name
+2. Converts kebab-case to snake_case (e.g., `my-agent` → `my_agent`)
+3. If `--trace` or `--trace-console` is set, wires up telemetry from `observability/config.yaml`
+4. Runs `adk run my_agent` in the project directory
+
+### Examples
+
+```bash
+# Run from the project directory
+zil run
+
+# Run from a different directory
+zil run --project-dir ./my-agent
+
+# Run with tracing to OTLP collector
+zil run --trace
+
+# Run with console span output (no infra needed)
+zil run --trace-console
+```
+
+---
+
+## `zil web`
+
+Start the ADK web UI for testing your agent in a browser. Wraps `adk web` with automatic module detection.
+
+```bash
+zil web [options]
+```
+
+### Options
+
+| Option | Values | Default | Description |
+|--------|--------|---------|-------------|
+| `--project-dir` | path | `.` | Project directory |
+| `--port` | integer | `8000` | Port for the web UI |
+| `--docker` | — | — | Build and run in a Docker container |
+| `--trace` | — | — | Enable OTLP trace export to the configured endpoint |
+| `--trace-console` | — | — | Print spans to stderr (no collector needed) |
+
+### Examples
+
+```bash
+# Start on default port
+zil web
+
+# Custom port
+zil web --port 3000
+
+# Start with tracing enabled
+zil web --trace
+```
+
+Opens a chat interface at `http://localhost:8000` where you can interact with your agent.
+
+### Docker mode
+
+Build and run the agent in a Docker container, replicating the production environment locally:
+
+```bash
+# Build image and run container
+zil web --docker
+
+# With full observability (Grafana OTEL-LGTM stack)
+zil web --docker --trace
+
+# Custom port
+zil web --docker --port 3000
+```
+
+When `--docker --trace` is used, a [Grafana OTEL-LGTM](https://github.com/grafana/docker-otel-lgtm) container is started alongside your agent, providing:
+
+- **Traces** (Tempo) — every agent invocation, LLM call, and tool execution
+- **Metrics** (Mimir) — request counts, latencies, token usage
+- **Logs** (Loki) — structured log aggregation
+
+| Service | URL |
+|---------|-----|
+| Agent web UI | `http://localhost:8000` |
+| Grafana dashboard | `http://localhost:3000` |
+
+Default Grafana login: `admin` / `admin`.
+
+To explore traces in Grafana:
+1. Go to **Explore** (compass icon)
+2. Select **Tempo** as the data source
+3. Click **Search** → **Run query**
+
+Both containers stop on Ctrl+C.
+
+---
+
+## `zil deploy`
+
+Deploy the agent to Google Cloud Run. Wraps `adk deploy cloud_run` with project/region resolution, pre-deploy eval gating, and automatic project context bundling.
+
+```bash
+zil deploy [options]
+```
+
+### Options
+
+| Option | Values | Default | Description |
+|--------|--------|---------|-------------|
+| `--project-dir` | path | `.` | Project directory |
+| `--project` | string | — | GCP project (or `GOOGLE_CLOUD_PROJECT` env var) |
+| `--region` | string | — | GCP region (or `GOOGLE_CLOUD_REGION` env var) |
+| `--service` | string | agent name | Cloud Run service name |
+| `--with-ui` | — | — | Include ADK web UI in Cloud Run deploy |
+| `--trace` | — | — | Enable Cloud Trace telemetry |
+| `--skip-evals` | — | — | Skip pre-deploy eval check |
+| `--from` | ref | — | Deploy from a `.zil` file or OCI registry reference |
+
+### Prerequisites
+
+1. **gcloud CLI** installed and authenticated:
+   ```bash
+   gcloud auth login
+   gcloud config set project YOUR_PROJECT_ID
+   ```
+
+2. **Required GCP APIs** enabled:
+   ```bash
+   gcloud services enable \
+     run.googleapis.com \
+     artifactregistry.googleapis.com \
+     cloudbuild.googleapis.com
+   ```
+
+3. **ADK installed** (included with `zil-ai[adk]`).
+
+### Walkthrough
+
+```bash
+# Deploy with explicit project and region
+zil deploy --project my-project --region us-central1
+
+# Use env vars instead of flags
+export GOOGLE_CLOUD_PROJECT=my-project
+export GOOGLE_CLOUD_REGION=us-central1
+zil deploy
+
+# Deploy with Cloud Trace telemetry
+zil deploy --project my-project --region us-central1 --trace
+
+# Include the ADK web UI (dev/staging only)
+zil deploy --project my-project --region us-central1 --with-ui
+
+# Skip evals for a quick re-deploy
+zil deploy --project my-project --region us-central1 --skip-evals
+
+# Deploy from a local .zil archive
+zil deploy --from dist/my-agent-1.0.0.zil \
+  --project my-project --region us-central1
+
+# Deploy from an OCI registry
+zil deploy --from us-docker.pkg.dev/my-project/agents/my-agent:1.0.0 \
+  --project my-project --region us-central1
+```
+
+### What happens during deploy
+
+1. **Eval gate** — runs the eval suite. If evals fail, deployment is **blocked** (exit code 1). Use `--skip-evals` to override.
+2. **Context bundling** — copies `manifest.yaml`, `identity/`, `adapters/`, and `observability/` into the agent module directory so they're available at runtime.
+3. **`adk deploy cloud_run`** — builds the container image via Cloud Build, deploys to Cloud Run, and routes traffic.
+4. **Cleanup** — removes bundled files from your local source tree.
+
+### Pre-deploy eval gate
+
+By default, `zil deploy` runs the eval suite before deploying. If evals fail, the deploy is **blocked**:
+
+```
+→ Running pre-deploy eval check...
+✗ Eval suite failed: 72.0% (threshold: 85.0%). Deploy blocked. Use --skip-evals to override.
+```
+
+Use `--skip-evals` to bypass:
+
+```bash
+zil deploy --project my-project --region us-central1 --skip-evals
+```
+
+### Secrets on Cloud Run
+
+The `.env` file is excluded from the container for security. Set secrets via environment variables or Secret Manager:
+
+```bash
+# Environment variables
+gcloud run services update my-agent \
+  --set-env-vars="GOOGLE_API_KEY=your-key" \
+  --region=us-central1
+
+# Secret Manager (recommended)
+echo -n "your-key" | gcloud secrets create google-api-key --data-file=-
+gcloud run services update my-agent \
+  --set-secrets="GOOGLE_API_KEY=google-api-key:latest" \
+  --region=us-central1
+```
+
+### Observability on Cloud Run
+
+With `--trace`, spans are exported to **Google Cloud Trace**. View them at:
+
+**GCP Console → Observability → Trace Explorer**
+
+Metrics and logs are automatically available in Cloud Run's built-in **Observability** tab.

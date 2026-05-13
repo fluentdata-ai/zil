@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://getzil.dev/spec/v1/manifest.schema.json",
+  "title": "Zil Agent Manifest",
+  "description": "Schema for Zil v1 agent manifest files.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "zil/v1",
+      "description": "Manifest API version."
+    },
+    "kind": {
+      "type": "string",
+      "const": "Agent",
+      "description": "Resource kind."
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{1,62}[a-z0-9]$",
+          "description": "Agent name in kebab-case (3-64 chars)."
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-[a-zA-Z0-9.]+)?(\\+[a-zA-Z0-9.]+)?$",
+          "description": "Semantic version (e.g. 1.0.0, 0.1.0-alpha)."
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Short description of the agent."
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Arbitrary key-value labels."
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "required": ["runtime", "identity"],
+      "additionalProperties": false,
+      "properties": {
+        "runtime": {
+          "$ref": "#/$defs/runtime",
+          "description": "Runtime configuration."
+        },
+        "identity": {
+          "type": "string",
+          "default": "./identity",
+          "description": "Path to the identity directory."
+        },
+        "skills": {
+          "type": "string",
+          "description": "Path to the skills directory."
+        },
+        "memory": {
+          "type": "string",
+          "description": "Path to the memory configuration."
+        },
+        "mcp_servers": {
+          "type": "string",
+          "description": "Path to the MCP server configurations directory."
+        },
+        "evals": {
+          "type": "string",
+          "description": "Path to the evals directory (contains config.yaml and suite files)."
+        },
+        "observability": {
+          "type": "string",
+          "description": "Path to the observability configuration."
+        },
+        "env": {
+          "type": "array",
+          "description": "Environment variables the agent requires at runtime.",
+          "items": {
+            "$ref": "#/$defs/envVar"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "envVar": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$",
+          "description": "Environment variable name (UPPER_SNAKE_CASE)."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of what this variable is for."
+        },
+        "required": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether the variable must be set at deploy time."
+        },
+        "default": {
+          "type": "string",
+          "description": "Default value if not provided (only for non-required vars)."
+        },
+        "secret": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this variable contains sensitive data (masked in prompts)."
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["framework", "language", "llm"],
+      "additionalProperties": false,
+      "properties": {
+        "framework": {
+          "type": "string",
+          "enum": ["adk", "a2a-supervisor", "custom"],
+          "default": "adk",
+          "description": "Agent framework."
+        },
+        "language": {
+          "type": "string",
+          "enum": ["python", "typescript", "go"],
+          "description": "Implementation language."
+        },
+        "python_version": {
+          "type": "string",
+          "pattern": "^3\\.(1[1-9]|[2-9][0-9])$",
+          "description": "Python version (if language is python)."
+        },
+        "llm": {
+          "type": "object",
+          "required": ["adapter"],
+          "properties": {
+            "adapter": {
+              "type": "string",
+              "description": "Path to LLM adapter YAML."
+            }
+          }
+        },
+        "embedding": {
+          "type": "object",
+          "properties": {
+            "adapter": {
+              "type": "string",
+              "description": "Path to embedding adapter YAML."
+            }
+          }
+        },
+        "resource_limits": {
+          "type": "object",
+          "properties": {
+            "max_tokens_per_request": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_duration_seconds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

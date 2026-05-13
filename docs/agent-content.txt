@@ -1,0 +1,563 @@
+# Zil Documentation — Agent-Friendly Reference
+# https://getzil.dev/docs
+# Source: https://github.com/fluentdata-co/zil
+# Package: pip install zil-ai
+
+## Overview
+
+Zil is an open-source framework for building, validating, packaging, and
+deploying production AI agents. It composes with Google ADK, A2A, MCP,
+DeepEval, and OpenTelemetry.
+
+This document contains the full technical reference in a format optimized
+for AI agents and LLMs.
+
+---
+
+## Install
+
+    pip install zil-ai          # CLI only
+    pip install 'zil-ai[adk]'   # CLI + SDK + Google ADK
+
+Requires Python 3.11+.
+
+---
+
+## CLI Reference
+
+### zil init
+
+Scaffold a new agent project.
+
+    zil init <name> [options]
+
+Options:
+    --llm           gemini | anthropic | openai | vertex  (default: gemini)
+    --non-interactive  Use defaults for all prompts
+
+Generated files:
+    manifest.yaml, adapters/llm.yaml, adapters/embed.yaml,
+    identity/persona.md, identity/instructions.md, identity/guardrails.yaml,
+    evals/baseline.yaml, evals/cases/accuracy.yaml, evals/cases/tool_use.yaml,
+    evals/cases/escalation.yaml, observability/config.yaml,
+    {module_name}/__init__.py, {module_name}/agent.py, {module_name}/.env.example,
+    Dockerfile, requirements.txt, .github/workflows/zil-pipeline.yaml,
+    README.md, .gitignore
+
+After scaffolding, creates a .venv and installs dependencies.
+
+### zil validate
+
+Validate a project against the manifest schema.
+
+    zil validate [options]
+
+Options:
+    --project-dir DIRECTORY  Project directory (default: .)
+    --format        text | json                   (default: text)
+
+Exit codes: 0 = valid, 1 = errors, 2 = warnings only.
+
+Checks: manifest schema, identity files exist, adapter files exist,
+eval suite exists, observability config exists, guardrails.yaml
+structure (enforceable rules count, regex validity, output protections).
+
+### zil audit
+
+Agent-native security audit — focused on LLM-specific attack surfaces.
+
+    zil audit [options]
+
+Options:
+    --project-dir DIRECTORY  Project directory (default: .)
+    --format        text | json                   (default: text)
+    --fix           Show actionable fix suggestions
+
+Exit codes: 0 = pass, 1 = critical findings, 2 = warnings only.
+
+Checks:
+1. Guardrail coverage — scores 5 dimensions (injection, PII output,
+   PII input, output constraints, denied topics)
+2. Injection resilience — runs 20 adversarial prompts through the
+   guardrail engine across 6 attack categories
+3. Output leakage — checks if system prompt/persona/instructions
+   could leak through output undetected
+4. Indirect injection surface — AST-scans tool functions for
+   external data ingestion (HTTP, DB, file reads) without guardrails
+5. Instruction consistency — detects contradictions between
+   permissive persona language and restrictive guardrails
+6. Context window risk — measures system prompt size vs model context
+7. Identity hardening — checks for anti-patterns in identity files
+
+### zil pack
+
+Build a .zil archive.
+
+    zil pack [options]
+
+Options:
+    --project-dir DIRECTORY  Project directory (default: .)
+    --output-dir DIRECTORY   Output directory (default: dist/)
+    --skip-evals             Skip eval suite (warns)
+
+Steps:
+1. Validate project against manifest schema
+2. Cross-check .env files against spec.env declarations
+   - FAIL if .env files contain undeclared vars (config drift)
+   - WARN if spec.env vars are missing from .env files
+3. Run eval suite (gate — blocks if below threshold)
+4. Generate CycloneDX 1.5 SBOM from requirements.txt
+5. Create versioned .zil tar.gz archive in dist/
+
+Env coverage results are recorded in BUILD_META.json inside the archive.
+
+### zil inspect
+
+Inspect a .zil archive without extracting.
+
+    zil inspect <archive> [options]
+
+Options:
+    --show COMPONENT  Print a specific component
+    --json            Machine-readable JSON output
+
+### zil run
+
+Run the agent interactively (wraps adk run).
+
+    zil run [options]
+
+Options:
+    --project-dir DIRECTORY  Project directory (default: .)
+    --trace                  Enable OTLP trace export
+    --trace-console          Print spans to stderr (no collector needed)
+
+Reads manifest.yaml to detect the agent module, converts kebab-case
+name to snake_case, then runs the agent.
+
+--trace sets OTEL_EXPORTER_OTLP_TRACES_ENDPOINT and lets ADK handle
+OTLP export in a subprocess.
+
+--trace-console runs the agent in-process with a ConsoleSpanExporter
+so spans print to stderr.
+
+### zil web
+
+Start the ADK web UI for testing.
+
+    zil web [options]
+
+Options:
+    --project-dir DIRECTORY  Project directory (default: .)
+    --port INTEGER           Port for web UI (default: 8000)
+    --trace                  Enable OTLP trace export
+    --trace-console          Print spans to stderr (no collector needed)
+
+Opens a chat interface at http://localhost:{port}.
+
+### zil push
+
+Push a .zil archive to an OCI-compatible registry.
+
+    zil push <archive> [options]
+
+Options:
+    --registry TEXT  OCI registry URL (required)
+                     e.g. us-central1-docker.pkg.dev/my-project/agents
+
+Resulting reference: <registry>/<agent-name>:<version>
+Works with Artifact Registry, GHCR, ECR, Docker Hub.
+Authentication uses ambient credentials (gcloud auth, docker login).
+
+### zil deploy
+
+Deploy the agent to Cloud Run.
+
+    zil deploy [options]
+
+Options:
+    --project-dir DIRECTORY  Project directory (default: .)
+    --from TEXT              Deploy from .zil archive or OCI registry reference
+    --env-file PATH          Dotenv file with env var values (for CI/automation)
+    --project TEXT           GCP project (or GOOGLE_CLOUD_PROJECT env var)
+    --region TEXT            GCP region (or GOOGLE_CLOUD_REGION env var)
+    --service TEXT           Cloud Run service name (default: agent name)
+    --with-ui                Include ADK web UI in Cloud Run deploy
+    --trace                  Enable Cloud Trace export
+    --skip-evals             Skip pre-deploy eval check
+
+Environment variable resolution (in priority order):
+1. Process environment variables
+2. --env-file (dotenv file)
+3. Interactive prompt (secrets are masked)
+
+Resolved variables are injected as Cloud Run env vars via --set-env-vars.
+
+Deploy from registry:
+    zil deploy --from us-docker.pkg.dev/proj/agents/my-agent:1.0.0 \
+      --project my-project --region us-central1
+
+---
+
+## SDK Reference
+
+### zil.create_agent()
+
+    import zil
+
+    agent = zil.create_agent(
+        tools=[],              # list of callable tool functions
+        project_dir=None,      # str | Path | None — auto-detects from cwd
+        name=None,             # str — override agent name
+        description=None,      # str — override description
+        model=None,            # str — override model string
+        instruction=None,      # str — override composed instruction
+        enable_telemetry=True, # bool — auto-setup OTel tracing
+        enable_guardrails=True,# bool — load & enforce guardrails at runtime
+    )
+
+Returns a google.adk.agents.LlmAgent with:
+- Name and description from manifest.yaml metadata
+- Model resolved from adapters/llm.yaml
+- Instruction composed from identity/persona.md + instructions.md + guardrails.yaml
+- Telemetry configured from observability/config.yaml (if endpoint set)
+- zil.config populated with spec.env declarations
+- Guardrail engine loaded from identity/guardrails.yaml (agent._zil_guardrails)
+
+### zil.config
+
+Dict-like runtime access to declared environment variables.
+Populated automatically during zil.create_agent().
+
+    import zil
+
+    root_agent = zil.create_agent(tools=[...])
+
+    # Access by key (raises MissingConfigError if required & missing)
+    api_key = zil.config["GOOGLE_API_KEY"]
+
+    # With fallback for optional vars
+    endpoint = zil.config.get("OTEL_ENDPOINT", "http://localhost:4318")
+
+    # Check presence
+    if "OPTIONAL_VAR" in zil.config:
+        ...
+
+    # Iteration
+    for name, value in zil.config.items():
+        ...
+
+Resolution order:
+1. .env and .env.local files (project root + module dir, never override existing)
+2. os.environ (always wins)
+3. Default values from spec.env declarations
+
+Raises MissingConfigError for missing required vars without defaults.
+Raises KeyError for vars not declared in spec.env.
+
+### zil.sdk.setup_telemetry()
+
+    from zil.sdk import setup_telemetry
+
+    setup_telemetry(
+        observability_config,     # dict from observability/config.yaml
+        agent_name="my-agent",
+        agent_version="1.0.0",
+    )
+
+Sets OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, OTEL_SERVICE_NAME, and
+OTEL_RESOURCE_ATTRIBUTES, then calls ADK's maybe_set_otel_providers().
+Returns True if tracing was activated.
+
+### zil.sdk.setup_console_telemetry()
+
+    from zil.sdk import setup_console_telemetry
+
+    setup_console_telemetry(
+        agent_name="my-agent",
+        agent_version="1.0.0",
+    )
+
+Registers a ConsoleSpanExporter that prints spans to stderr.
+Returns True if installed.
+
+---
+
+## Manifest Format (manifest.yaml)
+
+    apiVersion: zil/v1
+    kind: Agent
+    metadata:
+      name: my-agent            # kebab-case, 3-64 chars
+      version: "1.0.0"
+      description: Short description of the agent.
+      labels:
+        team: engineering
+        domain: customer-support
+    spec:
+      runtime:
+        language: python
+        framework: adk
+        llm:
+          adapter: ./adapters/llm.yaml
+        embedding:
+          adapter: ./adapters/embed.yaml
+      identity: ./identity
+      evals: ./evals
+      observability: ./observability
+      deploy:
+        target: cloud-run
+        dockerfile: ./Dockerfile
+      env:
+        - name: GOOGLE_API_KEY
+          description: Gemini API key
+          required: true
+          secret: true
+        - name: MCP_DB_CONNECTION_STRING
+          description: PostgreSQL connection string
+          required: true
+          secret: true
+        - name: OTEL_ENDPOINT
+          description: OpenTelemetry collector endpoint
+          required: false
+          default: http://localhost:4318
+
+### spec.env field reference
+
+    name          string   UPPER_SNAKE_CASE variable name (required)
+    description   string   Human-readable description
+    required      boolean  Must be set at deploy time (default: true)
+    default       string   Fallback value if not provided
+    secret        boolean  Sensitive data — masked in prompts (default: false)
+
+---
+
+## Adapters
+
+### LLM adapter (adapters/llm.yaml)
+
+    provider: gemini              # gemini | anthropic | openai | vertex-ai
+    model: gemini-2.0-flash
+    auth:
+      env_var: GOOGLE_API_KEY
+    parameters:
+      temperature: 0.7
+      max_tokens: 4096
+
+Provider-to-model mapping:
+    gemini      → gemini-2.0-flash (native ADK)
+    anthropic   → anthropic/claude-sonnet-4-20250514 (LiteLLM prefix)
+    openai      → openai/gpt-4o (LiteLLM prefix)
+    vertex-ai   → gemini-2.0-flash (native ADK)
+
+### Embedding adapter (adapters/embed.yaml)
+
+    provider: openai
+    model: text-embedding-3-small
+    auth:
+      env_var: OPENAI_API_KEY
+
+---
+
+## Identity
+
+Three files in the identity/ directory:
+
+### identity/persona.md
+Markdown file describing who the agent is — personality, expertise, tone.
+
+### identity/instructions.md
+Markdown file describing how the agent behaves — rules, format, boundaries.
+
+### identity/guardrails.yaml
+
+Runtime-enforced guardrail rules. The GuardrailEngine checks input
+(before LLM) and output (after LLM) using regex pattern matching.
+
+    # Detection toggles (built-in pattern libraries)
+    detection:
+      prompt_injection: true   # block common jailbreak patterns
+      pii_output: true         # block SSN/credit card in output
+      pii_input: false         # optionally scan user input for PII
+
+    # Custom regex patterns
+    blocked_patterns:
+      - name: internal_urls
+        pattern: "https?://internal\\."
+        target: output          # input | output | both
+        severity: block         # block | warn | log
+
+    # Keyword-based topic blocking (checked on input)
+    denied_topics:
+      - "competitor pricing"
+      - "salary information"
+
+    # Output length enforcement
+    output_constraints:
+      max_response_length: 4000
+
+    # LLM instruction rules (not runtime-enforced, passed to system prompt)
+    hard_blocks:
+      - topic: illegal_activity
+        description: Refuse requests for illegal activities.
+
+    escalation_triggers:
+      - condition: user_requests_human
+        action: escalate
+        message: "Connecting you with a human agent."
+
+The engine is loaded automatically by zil.create_agent() and attached
+as agent._zil_guardrails. It also converts hard_blocks and
+escalation_triggers to natural-language directives in the system prompt.
+
+### GuardrailEngine SDK API
+
+    from zil.sdk.guardrails import GuardrailEngine
+
+    engine = GuardrailEngine.from_config(guardrails_dict)
+    result = engine.check_input(user_message)
+    if result.blocked:
+        return "I can't help with that."
+
+    result = engine.check_output(agent_response)
+    if result.blocked:
+        return "[redacted]"
+
+GuardrailResult fields:
+    passed       bool — True if no blocking violations
+    blocked      bool — True if action == "block"
+    action       str  — "allow" | "block" | "warn"
+    violations   list[Violation] — rule, description, severity, matched_text
+
+OTel spans: guardrail.check.input / guardrail.check.output emitted
+automatically when a tracer is active (via GuardrailCallback).
+
+---
+
+## Evaluation
+
+### Eval suite (evals/baseline.yaml)
+
+    eval_suite:
+      name: baseline
+      pass_threshold: 0.85
+      cases:
+        - file: ./cases/accuracy.yaml
+          weight: 0.5
+        - file: ./cases/tool_use.yaml
+          weight: 0.3
+        - file: ./cases/escalation.yaml
+          weight: 0.2
+
+### Eval case format
+
+    name: accuracy
+    cases:
+      - input: "What is Zil?"
+        expected_contains:
+          - "framework"
+          - "agent"
+      - input: "Look up order #12345"
+        expected_tool: lookup_order
+      - input: "I want to talk to a human"
+        expected_action: escalate
+
+Scoring: suite_score = sum(case_group_pass_rate * weight).
+Pack succeeds if suite_score >= pass_threshold.
+
+---
+
+## Observability
+
+### Config (observability/config.yaml)
+
+    observability:
+      tracing:
+        exporter: otlp
+        endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT}
+        sample_rate: 1.0
+      resource_attributes:
+        service.name: my-agent
+
+### How tracing works
+
+zil.create_agent() reads observability/config.yaml, sets standard OTel
+env vars (OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, OTEL_SERVICE_NAME,
+OTEL_RESOURCE_ATTRIBUTES), then calls ADK's maybe_set_otel_providers().
+
+ADK emits spans for: agent invocation, LLM generate_content, tool execution.
+
+### Local development
+
+    # Console output (no infra needed)
+    zil run --trace-console
+
+    # Local Jaeger
+    docker run -d -p 16686:16686 -p 4318:4318 jaegertracing/jaeger:latest
+    export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces
+    zil run --trace
+
+### Production
+
+Set OTEL_EXPORTER_OTLP_TRACES_ENDPOINT in .env to your collector URL.
+The SDK picks it up automatically via zil.create_agent().
+
+### Compatible backends
+
+Jaeger, Google Cloud Trace, Datadog, Honeycomb, Grafana Tempo — any
+OTLP-compatible backend.
+
+---
+
+## Packaging & Registry
+
+Pipeline: zil pack → zil push → zil deploy --from
+
+    zil pack                                          # → dist/my-agent-1.0.0.zil
+    zil push dist/my-agent-1.0.0.zil --registry ...   # → OCI registry
+    zil deploy --from <registry-ref> --project ...    # → Cloud Run
+
+Archive contents:
+    manifest.yaml, adapters/, identity/, evals/, observability/,
+    my_agent/ (code), BUILD_META.json, SBOM.cyclonedx.json,
+    EVAL_RESULTS.json (if evals ran)
+
+BUILD_META.json includes env_coverage:
+    { "declared": [...], "resolved_locally": [...], "missing_locally": [...] }
+
+---
+
+## Project Layout
+
+    my-agent/
+    ├── manifest.yaml              Zil agent manifest (includes spec.env)
+    ├── my_agent/
+    │   ├── __init__.py
+    │   ├── agent.py               Agent entry point (uses zil.create_agent)
+    │   ├── .env.local             Local dev env vars (gitignored)
+    │   └── .env.example           API key template
+    ├── adapters/
+    │   ├── llm.yaml               LLM provider config
+    │   └── embed.yaml             Embedding provider config
+    ├── identity/
+    │   ├── persona.md             Agent persona
+    │   ├── instructions.md        Behavior instructions
+    │   └── guardrails.yaml        Hard rules and constraints
+    ├── evals/
+    │   ├── baseline.yaml          Eval suite definition
+    │   └── cases/                 Eval test cases
+    ├── observability/
+    │   └── config.yaml            OpenTelemetry config
+    ├── Dockerfile                 Container build
+    ├── requirements.txt           Python dependencies
+    └── .github/workflows/         CI/CD pipeline
+
+---
+
+## Links
+
+- Website: https://getzil.dev
+- Documentation: https://getzil.dev/docs
+- GitHub: https://github.com/fluentdata-co/zil
+- PyPI: https://pypi.org/project/zil-ai/
+- License: Apache-2.0

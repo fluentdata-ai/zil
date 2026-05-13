@@ -1,0 +1,228 @@
+# Observability
+
+Zil agents ship with pre-wired OpenTelemetry conventions for agent-specific spans. This is one of the highest-value features — most agents in the wild have poor observability. Zil standardizes it.
+
+## How it works
+
+Zil builds on ADK's built-in OpenTelemetry tracing. When you call `zil.create_agent()`, it:
+
+1. Reads `observability/config.yaml` from your project
+2. Sets standard OTel environment variables (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_SERVICE_NAME`)
+3. Injects resource attributes (`agent.name`, `agent.version`) so every span is tagged with the agent's identity
+4. Calls ADK's `maybe_set_otel_providers()` to register the OTLP exporter
+
+ADK then automatically emits spans for agent invocations, LLM calls, and tool executions — following the [OpenTelemetry GenAI Semantic Conventions](https://github.com/open-telemetry/semantic-conventions/blob/main/docs/gen-ai/gen-ai-agent-spans.md).
+
+## Configuration
+
+```yaml
+# observability/config.yaml
+observability:
+  tracing:
+    exporter: otlp
+    endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT}
+    sample_rate: 1.0
+  resource_attributes:
+    service.name: my-agent
+  span_conventions:
+    - agent.session
+    - agent.turn
+    - agent.reasoning
+    - agent.skill.invoke
+    - agent.mcp.tool_call
+    - agent.guardrail.check
+  required_attributes:
+    - agent.name
+    - agent.version
+    - session.id
+    - tokens.input
+    - tokens.output
+    - cost.usd
+```
+
+## Configuration fields
+
+### `tracing`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `exporter` | string | Yes | Exporter type. `otlp` is the standard choice. |
+| `endpoint` | string | Yes | OTel collector URL. Supports `${ENV_VAR}` substitution. |
+| `sample_rate` | float | No | Sampling rate (0.0–1.0). Default: `1.0` (sample everything). |
+
+### `resource_attributes`
+
+Custom [OTel resource attributes](https://opentelemetry.io/docs/concepts/resources/) attached to all spans. Typically used for `service.name`. Supports `${ENV_VAR}` substitution.
+
+### `span_conventions`
+
+The standard span types emitted by Zil agents:
+
+| Span | Description |
+|------|-------------|
+| `agent.session` | Top-level span for an entire user session |
+| `agent.turn` | One request-response cycle within a session |
+| `agent.reasoning` | LLM inference / chain-of-thought step |
+| `agent.skill.invoke` | Invocation of an agent skill or function |
+| `agent.mcp.tool_call` | Call to an MCP server tool |
+| `agent.guardrail.check` | Guardrail evaluation (pass/block/escalate) |
+
+### `required_attributes`
+
+Attributes that must be present on every span:
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `agent.name` | string | Agent name from the manifest |
+| `agent.version` | string | Agent version from the manifest |
+| `session.id` | string | Unique session identifier |
+| `tokens.input` | integer | Input tokens consumed |
+| `tokens.output` | integer | Output tokens generated |
+| `cost.usd` | float | Estimated cost in USD for this operation |
+
+Token and cost attributes are mandatory because they enable cost governance — tracking spend per agent, per session, per request.
+
+## Dev vs Prod
+
+### Local development
+
+**Quick debugging** — print spans to stderr with no infrastructure:
+
+```bash
+zil run --trace-console
+```
+
+This uses OpenTelemetry's `ConsoleSpanExporter` — every span is printed as it completes.
+
+**Full observability with Docker** — use `zil web --docker --trace` to get traces, metrics, and logs in one command:
+
+```bash
+zil web --docker --trace
+```
+
+This starts a [Grafana OTEL-LGTM](https://github.com/grafana/docker-otel-lgtm) container alongside your agent, providing:
+
+| Component | What it collects | Grafana data source |
+|-----------|-----------------|---------------------|
+| **Tempo** | Distributed traces | Tempo |
+| **Mimir** | Metrics (request counts, latencies) | Prometheus |
+| **Loki** | Structured logs | Loki |
+
+- Agent UI: `http://localhost:8000`
+- Grafana: `http://localhost:3000` (login: `admin` / `admin`)
+
+To explore traces:
+1. Open Grafana → **Explore** (compass icon)
+2. Select **Tempo** as the data source
+3. Click **Search** → **Run query**
+
+Both containers stop on Ctrl+C.
+
+**Manual OTLP setup** — point to any collector:
+
+```bash
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318
+zil run --trace
+```
+
+### Production (Cloud Run)
+
+Deploy with `--trace` to send spans to **Google Cloud Trace**:
+
+```bash
+zil deploy --project my-project --region us-central1 --trace
+```
+
+View traces at: **GCP Console → Observability → Trace Explorer**
+
+For other backends, set the endpoint in your `.env`:
+
+```bash
+# .env
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://your-collector.example.com/v1/traces
+```
+
+The SDK picks this up automatically via `zil.create_agent()` — no code changes needed between dev and prod.
+
+## SDK integration
+
+Telemetry is wired up automatically when you use `zil.create_agent()`:
+
+```python
+import zil
+
+agent = zil.create_agent(tools=[...])
+# Tracing is active if observability/config.yaml exists
+# and OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is set
+```
+
+To disable automatic telemetry setup (e.g., in tests or when managing OTel yourself):
+
+```python
+agent = zil.create_agent(tools=[...], enable_telemetry=False)
+```
+
+For programmatic control:
+
+```python
+from zil.sdk import setup_telemetry, setup_console_telemetry
+
+# Console exporter for local debugging
+setup_console_telemetry(agent_name="my-agent", agent_version="1.0.0")
+
+# Or OTLP exporter from config
+setup_telemetry(obs_config, agent_name="my-agent", agent_version="1.0.0")
+```
+
+## Compatible backends
+
+The `otlp` exporter works with any OTel-compatible backend:
+
+| Backend | Notes |
+|---------|-------|
+| **Google Cloud Trace** | Native GCP integration via `zil deploy --trace` |
+| **Grafana OTEL-LGTM** | Built-in with `zil web --docker --trace` (traces + metrics + logs) |
+| **Datadog** | Via OTel Collector |
+| **Honeycomb** | Direct OTLP support |
+| **Grafana Cloud** | Hosted Tempo / Mimir / Loki |
+| **Jaeger** | Open-source, traces only |
+
+## Environment setup
+
+Set the collector endpoint in your `.env`:
+
+```bash
+# .env
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces
+```
+
+For Google Cloud Trace, use the `--otel_to_cloud` flag with `adk web` or configure the GCP OTLP endpoint.
+
+## CLI flags
+
+Both `zil run` and `zil web` support tracing flags:
+
+| Flag | Description |
+|------|-------------|
+| `--trace` | Enable OTLP trace export to the configured endpoint |
+| `--trace-console` | Print spans to stderr (no collector needed) |
+
+```bash
+# Export to OTLP collector
+zil run --trace
+zil web --trace
+
+# Local debugging — no infra required
+zil run --trace-console
+```
+
+## Validation
+
+`zil validate` checks that:
+- `observability/config.yaml` exists
+- The `cost.usd` attribute is present (warns if missing)
+
+```
+✓ observability/config.yaml — present
+⚠ observability/config.yaml — missing recommended attribute: cost.usd
+```

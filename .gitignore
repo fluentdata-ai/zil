@@ -1,0 +1,34 @@
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.venv/
+dist/
+build/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Internal / private
+artifacts/
+.windsurf/
+test-guardrail-agent/
+
+# Build artifacts
+/docs/.next
+/docs/node_modules
+/docs/public/_pagefind
+/website/.next
+/website/node_modules
+/tmp

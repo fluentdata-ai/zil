@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://getzil.dev/sitemap.xml
+Agent-info: https://getzil.dev/agent.txt
