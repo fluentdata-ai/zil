@@ -4,6 +4,8 @@ export default {
   cli: "CLI Reference",
   sdk: "SDK Reference",
   packaging: "Packaging & Registry",
+  signing: "Archive Signing",
+  cost: "Cost Tracking",
   "---": {
     type: "separator",
     title: "Configuration",

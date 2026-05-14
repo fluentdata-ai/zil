@@ -1,0 +1,277 @@
+# Archive Signing
+
+Zil supports signing `.zil` archives using [cosign](https://docs.sigstore.dev/about/overview/) from the Sigstore project. Signing provides **tamper evidence** and **provenance** — you can verify that an archive was built by a trusted identity and hasn't been modified since.
+
+## How it works
+
+```
+zil pack --sign
+  → my-agent-1.0.0.zil          # the archive
+  → my-agent-1.0.0.zil.bundle   # Sigstore bundle (signature + cert + tlog entry)
+
+zil inspect --verify my-agent-1.0.0.zil
+  → ✓ Verified (signer: dev@company.com)
+
+zil push → pushes archive + bundle to OCI registry
+```
+
+Zil shells out to the `cosign` binary. No Python dependencies are added.
+
+---
+
+## Prerequisites
+
+Install cosign:
+
+```bash
+# macOS
+brew install cosign
+
+# Linux (download binary)
+curl -fsSL https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64 -o /usr/local/bin/cosign
+chmod +x /usr/local/bin/cosign
+
+# Verify installation
+cosign version
+```
+
+If cosign is not installed, `zil pack --sign` prints installation instructions and exits.
+
+---
+
+## Keyless signing (recommended)
+
+Keyless signing uses Sigstore's public infrastructure — no private keys to manage. It authenticates via OIDC (Google, GitHub, Microsoft) and records the signature in Sigstore's transparency log.
+
+```bash
+zil pack --sign
+```
+
+This will:
+
+1. Build the `.zil` archive as usual
+2. Open a browser for OIDC authentication (or use ambient credentials in CI)
+3. Create `dist/my-agent-1.0.0.zil.bundle` — a single JSON file containing the signature, certificate chain, and transparency log entry
+
+### Example output
+
+```
+→ Validating project...  ✓
+→ Running eval suite...   ✓ 24/25 passed (96.0%)
+→ Generating SBOM...      ✓
+→ Building archive...     ✓
+
+→ Wrote: dist/my-agent-1.0.0.zil (42.3 KB)
+
+→ Signing archive with cosign...  ✓
+  Bundle: dist/my-agent-1.0.0.zil.bundle
+  Signer: dev@company.com
+  Type: cosign-keyless
+```
+
+### CI environments
+
+In CI (GitHub Actions, GitLab CI, etc.), keyless signing uses workload identity federation — no browser needed. Cosign automatically detects the CI environment:
+
+```yaml
+# GitHub Actions example
+- name: Build and sign
+  run: |
+    pip install zil-ai
+    zil pack --sign
+  env:
+    COSIGN_EXPERIMENTAL: "1"
+```
+
+GitHub Actions provides an OIDC token automatically. The signer identity will be the workflow reference (e.g., `https://github.com/my-org/my-repo/.github/workflows/release.yml@refs/heads/main`).
+
+---
+
+## Key-based signing
+
+For environments where OIDC isn't available, or when you want explicit control over signing keys:
+
+### Generate a key pair
+
+```bash
+cosign generate-key-pair
+# Creates cosign.key (private) and cosign.pub (public)
+```
+
+### Sign with a key
+
+```bash
+zil pack --sign --key cosign.key
+```
+
+This creates a `.bundle` file containing the signature (no certificate chain since the identity is the key itself).
+
+### Example output
+
+```
+→ Signing archive with cosign...  ✓
+  Bundle: dist/my-agent-1.0.0.zil.bundle
+  Type: cosign-key
+```
+
+> **Security note:** Never commit `cosign.key` to version control. Store it in a secrets manager or CI/CD secret store. Only the public key (`cosign.pub`) should be distributed.
+
+---
+
+## Verifying signatures
+
+Use `zil inspect --verify` to check that an archive is authentically signed:
+
+### Keyless verification
+
+```bash
+zil inspect --verify dist/my-agent-1.0.0.zil
+```
+
+This requires a `.bundle` file alongside the archive. Output:
+
+```
+→ Verifying signature for my-agent-1.0.0.zil...  ✓ Verified
+  Signer: dev@company.com
+```
+
+### Key-based verification
+
+```bash
+zil inspect --verify dist/my-agent-1.0.0.zil --key cosign.pub
+```
+
+The `.bundle` file and public key are needed. Output:
+
+```
+→ Verifying signature for my-agent-1.0.0.zil...  ✓ Verified
+```
+
+### Verification failures
+
+If the archive has been tampered with or the signature doesn't match:
+
+```
+→ Verifying signature for my-agent-1.0.0.zil...  ✗ Not verified
+  Verification failed: invalid signature
+```
+
+Exit code is `1` on failure — useful for CI gates:
+
+```yaml
+# CI verification gate
+- name: Verify archive
+  run: zil inspect --verify dist/my-agent-*.zil --key cosign.pub
+```
+
+---
+
+## Pushing signed archives
+
+When you push a signed archive, `zil push` automatically uploads the bundle alongside:
+
+```bash
+zil push dist/my-agent-1.0.0.zil \
+  --registry us-docker.pkg.dev/my-project/agents
+```
+
+Output:
+
+```
+→ Pushing my-agent-1.0.0.zil to registry...
+✓ Pushed: us-docker.pkg.dev/my-project/agents/my-agent:1.0.0
+→ Pushing signature bundle...  ✓
+```
+
+The bundle is stored as a separate OCI artifact tagged with a `-sig` suffix (e.g., `my-agent-sig:1.0.0`).
+
+If no `.bundle` file exists alongside the archive, `zil push` skips the signature upload silently.
+
+---
+
+## End-to-end example
+
+### Developer workflow
+
+```bash
+# Build, sign, and push in one pipeline
+zil pack --sign
+zil push dist/my-agent-1.0.0.zil \
+  --registry us-docker.pkg.dev/my-project/agents
+```
+
+### Deployment verification
+
+```bash
+# Pull and verify before deploying
+zil inspect --verify dist/my-agent-1.0.0.zil
+
+# Deploy only if verified
+zil deploy \
+  --from us-docker.pkg.dev/my-project/agents/my-agent:1.0.0 \
+  --project my-project --region us-central1
+```
+
+### CI/CD pipeline (GitHub Actions)
+
+```yaml
+name: Release Agent
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  id-token: write  # Required for keyless signing
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Install Zil
+        run: pip install 'zil-ai[registry]'
+
+      - name: Pack and sign
+        run: zil pack --sign
+
+      - name: Push to registry
+        run: |
+          gcloud auth configure-docker us-docker.pkg.dev
+          zil push dist/*.zil \
+            --registry us-docker.pkg.dev/${{ vars.GCP_PROJECT }}/agents
+```
+
+---
+
+## File reference
+
+After signing, your `dist/` directory contains:
+
+| File | Description |
+|------|-------------|
+| `my-agent-1.0.0.zil` | The archive |
+| `my-agent-1.0.0.zil.bundle` | Sigstore bundle (signature, certificate chain, transparency log entry) |
+
+Both files should be kept together. Verification requires the `.bundle` file (and your public key for key-based verification).
+
+---
+
+## CLI reference
+
+### `zil pack --sign`
+
+| Option | Description |
+|--------|-------------|
+| `--sign` | Sign the archive with cosign after building |
+| `--key PATH` | Path to cosign private key (default: keyless/OIDC) |
+
+### `zil inspect --verify`
+
+| Option | Description |
+|--------|-------------|
+| `--verify` | Verify the cosign signature of the archive |
+| `--key PATH` | Path to cosign public key (default: keyless/bundle) |

@@ -1,7 +1,12 @@
-"""Tests for cosign signing and verification (v0.1.11)."""
+"""Tests for cosign signing and verification (v0.1.11).
+
+Cosign 3.x uses --bundle for signing/verification. The bundle is a single
+JSON file containing the signature, certificate chain, and tlog entry.
+"""
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -36,6 +41,19 @@ class TestFindCosign:
         assert result is None
 
 
+def _fake_bundle() -> str:
+    """Return a minimal Sigstore bundle JSON string."""
+    return json.dumps({
+        "mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
+        "verificationMaterial": {
+            "x509CertificateChain": {
+                "certificates": [{"rawBytes": "ZmFrZS1jZXJ0LWRhdGE="}]
+            }
+        },
+        "messageSignature": {"signature": "ZmFrZS1zaWc="},
+    })
+
+
 # ---------------------------------------------------------------------------
 # sign_archive
 # ---------------------------------------------------------------------------
@@ -58,13 +76,10 @@ class TestSignArchive:
         archive = tmp_path / "test-0.1.0.zil"
         archive.write_bytes(b"fake archive")
 
-        # Create the expected output files
-        sig_path = archive.with_suffix(".zil.sig")
-        cert_path = archive.with_suffix(".zil.cert")
+        bundle_path = archive.with_suffix(".zil.bundle")
 
         def side_effect(*args, **kwargs):
-            sig_path.write_text("signature-data")
-            cert_path.write_text("cert-data")
+            bundle_path.write_text(_fake_bundle())
             mock_result = MagicMock()
             mock_result.returncode = 0
             mock_result.stdout = ""
@@ -75,12 +90,13 @@ class TestSignArchive:
         result = sign_archive(archive)
         assert result.signed is True
         assert result.signature_type == "cosign-keyless"
-        assert result.signature_path == sig_path
+        assert result.bundle_path == bundle_path
 
-        # Verify cosign was called with --yes (keyless) — first call is cosign
+        # Verify cosign was called with --bundle and --yes (keyless)
         call_args = mock_run.call_args_list[0][0][0]
         assert "sign-blob" in call_args
         assert "--yes" in call_args
+        assert "--bundle" in call_args
 
     @patch("shutil.which", return_value="/usr/local/bin/cosign")
     @patch("subprocess.run")
@@ -90,10 +106,10 @@ class TestSignArchive:
         key_file = tmp_path / "cosign.key"
         key_file.write_text("private-key")
 
-        sig_path = archive.with_suffix(".zil.sig")
+        bundle_path = archive.with_suffix(".zil.bundle")
 
         def side_effect(*args, **kwargs):
-            sig_path.write_text("signature-data")
+            bundle_path.write_text(_fake_bundle())
             mock_result = MagicMock()
             mock_result.returncode = 0
             return mock_result
@@ -104,9 +120,10 @@ class TestSignArchive:
         assert result.signed is True
         assert result.signature_type == "cosign-key"
 
-        # Verify cosign was called with --key — first call is cosign
+        # Verify cosign was called with --key and --bundle
         call_args = mock_run.call_args_list[0][0][0]
         assert "--key" in call_args
+        assert "--bundle" in call_args
 
     @patch("shutil.which", return_value="/usr/local/bin/cosign")
     @patch("subprocess.run")
@@ -136,6 +153,22 @@ class TestSignArchive:
         assert result.signed is False
         assert "timed out" in result.error
 
+    @patch("shutil.which", return_value="/usr/local/bin/cosign")
+    @patch("subprocess.run")
+    def test_signing_no_bundle_produced(self, mock_run, mock_which, tmp_path):
+        """Fails if cosign returns 0 but no bundle file was created."""
+        archive = tmp_path / "test-0.1.0.zil"
+        archive.write_bytes(b"fake archive")
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_run.return_value = mock_result
+
+        result = sign_archive(archive)
+        assert result.signed is False
+        assert "bundle" in result.error.lower()
+
 
 # ---------------------------------------------------------------------------
 # verify_archive
@@ -153,38 +186,22 @@ class TestVerifyArchive:
         assert result.verified is False
         assert "not installed" in result.error
 
-    def test_no_signature_file(self, tmp_path):
-        """Verify fails when .sig file doesn't exist."""
+    def test_no_bundle_file(self, tmp_path):
+        """Verify fails when .bundle file doesn't exist."""
         archive = tmp_path / "test-0.1.0.zil"
         archive.write_bytes(b"fake archive")
-        # Don't mock _find_cosign — just patch which to return something
         with patch("shutil.which", return_value="/usr/local/bin/cosign"):
             result = verify_archive(archive)
         assert result.verified is False
-        assert "No signature file" in result.error
-
-    @patch("shutil.which", return_value="/usr/local/bin/cosign")
-    def test_no_cert_for_keyless(self, mock_which, tmp_path):
-        """Keyless verify fails when .cert doesn't exist."""
-        archive = tmp_path / "test-0.1.0.zil"
-        archive.write_bytes(b"fake archive")
-        sig_path = archive.with_suffix(".zil.sig")
-        sig_path.write_text("sig-data")
-        # No .cert file
-
-        result = verify_archive(archive)
-        assert result.verified is False
-        assert "No certificate file" in result.error
+        assert "No bundle file" in result.error
 
     @patch("shutil.which", return_value="/usr/local/bin/cosign")
     @patch("subprocess.run")
     def test_keyless_verification_success(self, mock_run, mock_which, tmp_path):
         archive = tmp_path / "test-0.1.0.zil"
         archive.write_bytes(b"fake archive")
-        sig_path = archive.with_suffix(".zil.sig")
-        sig_path.write_text("sig-data")
-        cert_path = archive.with_suffix(".zil.cert")
-        cert_path.write_text("cert-data")
+        bundle_path = archive.with_suffix(".zil.bundle")
+        bundle_path.write_text(_fake_bundle())
 
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -194,18 +211,19 @@ class TestVerifyArchive:
         result = verify_archive(archive)
         assert result.verified is True
 
-        # Verify cosign called with --certificate — first call is verify-blob
+        # Verify cosign called with --bundle and --new-bundle-format
         call_args = mock_run.call_args_list[0][0][0]
         assert "verify-blob" in call_args
-        assert "--certificate" in call_args
+        assert "--bundle" in call_args
+        assert "--new-bundle-format" in call_args
 
     @patch("shutil.which", return_value="/usr/local/bin/cosign")
     @patch("subprocess.run")
     def test_key_based_verification_success(self, mock_run, mock_which, tmp_path):
         archive = tmp_path / "test-0.1.0.zil"
         archive.write_bytes(b"fake archive")
-        sig_path = archive.with_suffix(".zil.sig")
-        sig_path.write_text("sig-data")
+        bundle_path = archive.with_suffix(".zil.bundle")
+        bundle_path.write_text(_fake_bundle())
         key_file = tmp_path / "cosign.pub"
         key_file.write_text("public-key")
 
@@ -216,19 +234,18 @@ class TestVerifyArchive:
         result = verify_archive(archive, key_path=key_file)
         assert result.verified is True
 
-        # First call is cosign verify-blob
+        # First call is cosign verify-blob with --key
         call_args = mock_run.call_args_list[0][0][0]
         assert "--key" in call_args
+        assert "--bundle" in call_args
 
     @patch("shutil.which", return_value="/usr/local/bin/cosign")
     @patch("subprocess.run")
     def test_verification_failure(self, mock_run, mock_which, tmp_path):
         archive = tmp_path / "test-0.1.0.zil"
         archive.write_bytes(b"fake archive")
-        sig_path = archive.with_suffix(".zil.sig")
-        sig_path.write_text("sig-data")
-        cert_path = archive.with_suffix(".zil.cert")
-        cert_path.write_text("cert-data")
+        bundle_path = archive.with_suffix(".zil.bundle")
+        bundle_path.write_text(_fake_bundle())
 
         mock_result = MagicMock()
         mock_result.returncode = 1

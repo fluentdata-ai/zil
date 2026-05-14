@@ -17,6 +17,7 @@ This returns a fully-configured [`google.adk.agents.LlmAgent`](https://adk.dev/a
 - **Instruction** composed from `identity/persona.md` + `identity/instructions.md` + `identity/guardrails.yaml`
 - **Telemetry** configured from `observability/config.yaml` (if endpoint set)
 - **Guardrail engine** loaded from `identity/guardrails.yaml` → attached as `agent._zil_guardrails`
+- **Cost tracking** initialized from `spec.cost` → accessible via `zil.cost` and `agent._zil_cost`
 - **Environment config** populated via `zil.config` from `spec.env` declarations
 
 ## How it works
@@ -50,6 +51,7 @@ All parameters are optional — by default, everything is read from the project 
 | `instruction` | `str` | composed | Override the entire instruction |
 | `enable_telemetry` | `bool` | `True` | Auto-setup OTel tracing from `observability/config.yaml` |
 | `enable_guardrails` | `bool` | `True` | Load runtime guardrail engine from `identity/guardrails.yaml` |
+| `enable_cost_tracking` | `bool` | `True` | Track token usage and enforce budgets from `spec.cost` |
 
 ## Adding tools
 

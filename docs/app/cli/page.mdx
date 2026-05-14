@@ -244,6 +244,8 @@ zil pack [options]
 | `--project-dir` | path | `.` | Project directory to package |
 | `--output-dir` | path | `dist/` | Output directory for the archive |
 | `--skip-evals` | — | — | Skip eval suite (warns loudly) |
+| `--sign` | — | — | Sign the archive with [cosign](/docs/signing) after building |
+| `--key` | path | — | Path to cosign private key (default: keyless/OIDC) |
 
 ### What it does
 
@@ -278,6 +280,12 @@ zil pack --skip-evals
 
 # Custom output directory
 zil pack --output-dir ./artifacts
+
+# Sign with keyless (Sigstore OIDC)
+zil pack --sign
+
+# Sign with a private key
+zil pack --sign --key cosign.key
 ```
 
 ---
@@ -302,6 +310,8 @@ zil inspect <archive> [options]
 |--------|--------|---------|-------------|
 | `--show` | file path | — | Print a specific file from the archive |
 | `--json` | — | — | Machine-readable JSON output |
+| `--verify` | — | — | Verify the [cosign signature](/docs/signing) of the archive |
+| `--key` | path | — | Path to cosign public key for verification |
 
 ### Examples
 
@@ -315,6 +325,12 @@ zil inspect dist/my-agent-1.0.0.zil --show identity/persona.md
 
 # JSON output for CI/CD
 zil inspect dist/my-agent-1.0.0.zil --json
+
+# Verify signature (keyless)
+zil inspect --verify dist/my-agent-1.0.0.zil
+
+# Verify with public key
+zil inspect --verify dist/my-agent-1.0.0.zil --key cosign.pub
 ```
 
 ### Output

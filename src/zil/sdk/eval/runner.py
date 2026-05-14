@@ -224,16 +224,44 @@ def _build_default_agent_fn(project_dir: Path) -> Callable[[str], str]:
     # which triggers noisy cleanup errors from the Google GenAI client.
     loop = asyncio.new_event_loop()
 
-    # Suppress the GenAI async client cleanup noise
+    # Suppress GenAI/aiohttp async client cleanup noise at process exit
     def _quiet_exception_handler(
-        loop: asyncio.AbstractEventLoop, context: dict,
+        _loop: asyncio.AbstractEventLoop, context: dict,
     ) -> None:
+        msg = context.get("message", "")
         exc = context.get("exception")
-        if exc and "async_httpx_client" in str(exc):
-            return  # Suppress known GenAI cleanup noise
-        loop.default_exception_handler(context)
+        exc_str = str(exc) if exc else ""
+        # Suppress known async cleanup noise from GenAI client (httpx + aiohttp)
+        if any(
+            tok in msg + exc_str
+            for tok in ("async_httpx_client", "aclose", "aiohttp", "Task was destroyed")
+        ):
+            return
+        _loop.default_exception_handler(context)
 
     loop.set_exception_handler(_quiet_exception_handler)
+
+    # Register cleanup so pending async tasks are cancelled gracefully
+    import atexit
+
+    def _cleanup_loop() -> None:
+        try:
+            # Cancel all remaining tasks
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        except Exception:
+            pass
+        finally:
+            try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception:
+                pass
+            loop.close()
+
+    atexit.register(_cleanup_loop)
 
     def _invoke(user_input: str) -> str:
         session_id = f"eval_{uuid.uuid4().hex[:8]}"

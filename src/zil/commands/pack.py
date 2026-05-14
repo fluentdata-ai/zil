@@ -217,10 +217,8 @@ def pack(
         sign_result = sign_archive(archive_path, key_path=key)
         if sign_result.signed:
             console.print("[green]✓[/green]")
-            if sign_result.signature_path:
-                console.print(f"  Signature: {sign_result.signature_path}")
-            if sign_result.certificate_path:
-                console.print(f"  Certificate: {sign_result.certificate_path}")
+            if sign_result.bundle_path:
+                console.print(f"  Bundle: {sign_result.bundle_path}")
             if sign_result.signer_identity:
                 console.print(f"  Signer: {sign_result.signer_identity}")
             console.print(f"  Type: {sign_result.signature_type}")

@@ -99,6 +99,8 @@ Options:
     --project-dir DIRECTORY  Project directory (default: .)
     --output-dir DIRECTORY   Output directory (default: dist/)
     --skip-evals             Skip eval suite (warns)
+    --sign                   Sign the archive with cosign after building
+    --key PATH               Path to cosign private key (default: keyless/OIDC)
 
 Steps:
 1. Validate project against manifest schema
@@ -120,6 +122,8 @@ Inspect a .zil archive without extracting.
 Options:
     --show COMPONENT  Print a specific component
     --json            Machine-readable JSON output
+    --verify          Verify the cosign signature of the archive
+    --key PATH        Path to cosign public key for verification
 
 ### zil run
 
@@ -214,6 +218,7 @@ Deploy from registry:
         instruction=None,      # str — override composed instruction
         enable_telemetry=True, # bool — auto-setup OTel tracing
         enable_guardrails=True,# bool — load & enforce guardrails at runtime
+        enable_cost_tracking=True, # bool — track token usage from spec.cost
     )
 
 Returns a google.adk.agents.LlmAgent with:
@@ -223,6 +228,7 @@ Returns a google.adk.agents.LlmAgent with:
 - Telemetry configured from observability/config.yaml (if endpoint set)
 - zil.config populated with spec.env declarations
 - Guardrail engine loaded from identity/guardrails.yaml (agent._zil_guardrails)
+- Cost tracker initialized from spec.cost (agent._zil_cost, zil.cost singleton)
 
 ### zil.config
 
@@ -321,6 +327,38 @@ Returns True if installed.
           description: OpenTelemetry collector endpoint
           required: false
           default: http://localhost:4318
+
+### zil.cost
+
+Module-level cost tracker singleton. Populated by create_agent().
+Tracks raw token counts — no USD. Dollar pricing is delegated to
+the Zil Runtime (coming soon) or your own billing layer.
+
+    import zil
+
+    root_agent = zil.create_agent(tools=[...])
+
+    # Session totals
+    zil.cost.total_tokens         # int — total tokens used
+    zil.cost.total_input_tokens   # int — total input/prompt tokens
+    zil.cost.total_output_tokens  # int — total output/completion tokens
+    zil.cost.request_count        # int — number of LLM calls
+    zil.cost.budget_remaining     # int | None — tokens left (None if no limit)
+    zil.cost.by_model             # dict[str, TokenCounts] — per-model breakdown
+    zil.cost.requests             # list[UsageRecord] — full request history
+    zil.cost.reset()              # clear accumulators (keeps config)
+
+### spec.cost manifest section
+
+    spec:
+      cost:
+        max_tokens_per_request: 8192    # hard cap per LLM call (blocked if exceeded)
+        max_tokens_per_session: 500000  # hard cap per agent session
+        alert_threshold_pct: 80         # warn at this % of session budget
+        track_by_model: true            # per-model token breakdowns
+
+All fields optional. If spec.cost is omitted, tracking is passive (no limits).
+Budget statuses: allowed | warned | blocked.
 
 ### spec.env field reference
 
@@ -506,6 +544,31 @@ The SDK picks it up automatically via zil.create_agent().
 
 Jaeger, Google Cloud Trace, Datadog, Honeycomb, Grafana Tempo — any
 OTLP-compatible backend.
+
+---
+
+## Archive Signing
+
+Zil supports signing .zil archives with cosign (Sigstore).
+
+### Keyless signing (recommended)
+    zil pack --sign
+Creates a .bundle file alongside the archive (Sigstore bundle containing
+signature, certificate chain, and transparency log entry). Authenticates
+via OIDC (Google, GitHub, Microsoft). In CI, uses workload identity automatically.
+
+### Key-based signing
+    cosign generate-key-pair           # creates cosign.key + cosign.pub
+    zil pack --sign --key cosign.key   # creates .bundle file
+
+### Verifying signatures
+    zil inspect --verify dist/my-agent-1.0.0.zil              # keyless
+    zil inspect --verify dist/my-agent-1.0.0.zil --key cosign.pub  # key-based
+Exit code 1 on failure.
+
+### Push with signature
+    zil push dist/my-agent-1.0.0.zil --registry ...
+Automatically pushes .bundle alongside the archive if it exists.
 
 ---
 

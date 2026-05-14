@@ -16,10 +16,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`create_agent(enable_cost_tracking=True)`** — automatically initializes cost tracking from `spec.cost` and attaches the callback. Access via `agent._zil_cost`.
 - **`zil validate` cost checks** — warns if `spec.cost` is absent, flags inconsistencies (session < request budget, exceeds resource_limits).
 - **`zil inspect` cost display** — shows budget configuration from archived manifests.
-- **`zil pack --sign`** — signs the `.zil` archive using cosign (keyless/Sigstore OIDC by default). Produces `.sig` and `.cert` files alongside the archive.
+- **`zil pack --sign`** — signs the `.zil` archive using cosign (keyless/Sigstore OIDC by default). Produces a Sigstore `.bundle` file alongside the archive.
 - **`zil pack --sign --key <path>`** — key-based cosign signing for CI environments.
 - **`zil inspect --verify`** — verifies the cosign signature of a `.zil` archive (keyless or `--key`).
-- **`zil push` signature attachment** — automatically pushes `.sig`/`.cert` alongside the OCI artifact when present.
+- **`zil push` signature attachment** — automatically pushes the `.bundle` alongside the OCI artifact when present.
 - **`zil init` template** — new commented-out `spec.cost` section in scaffolded `manifest.yaml`.
 - 45 new tests (`test_cost.py`, `test_signing.py`); 295 total tests.
 

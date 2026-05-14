@@ -61,15 +61,13 @@ def push_archive(archive_path: Path, registry: str) -> str:
 
 
 def push_signature(
-    sig_path: Path,
-    cert_path: Path | None,
+    bundle_path: Path,
     artifact_reference: str,
 ) -> str:
-    """Push signature files as a referrer to the OCI artifact.
+    """Push cosign bundle as a referrer to the OCI artifact.
 
     Args:
-        sig_path: Path to the .sig file.
-        cert_path: Optional path to the .cert file.
+        bundle_path: Path to the .bundle file.
         artifact_reference: The OCI reference of the signed artifact.
 
     Returns:
@@ -83,19 +81,15 @@ def push_signature(
             "Install with: pip install 'zil-ai[registry]'"
         ) from e
 
-    # Push signature as a separate artifact tagged with -sig suffix
+    # Push bundle as a separate artifact tagged with -sig suffix
     sig_target = artifact_reference.replace(":", "-sig:")
     if ":" not in sig_target:
         sig_target = f"{artifact_reference}-sig"
 
-    files = [str(sig_path)]
-    if cert_path and cert_path.exists():
-        files.append(str(cert_path))
-
     client = oras.client.OrasClient()
     client.push(
         target=sig_target,
-        files=files,
+        files=[str(bundle_path)],
         manifest_annotations={
             "dev.getzil.type": "agent-signature",
             "dev.getzil.signed-artifact": artifact_reference,

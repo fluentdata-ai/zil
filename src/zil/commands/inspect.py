@@ -27,7 +27,9 @@ console = Console()
     default=None,
     help="Path to cosign public key for verification (default: keyless/certificate).",
 )
-def inspect(archive: Path, show: str | None, output_json: bool, verify: bool, key: Path | None) -> None:
+def inspect(
+    archive: Path, show: str | None, output_json: bool, verify: bool, key: Path | None,
+) -> None:
     """Inspect a .zil archive without extracting it.
 
     Displays the manifest summary, SBOM overview, eval results,

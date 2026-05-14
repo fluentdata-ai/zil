@@ -1,0 +1,278 @@
+# Cost Tracking
+
+Zil provides built-in token usage metering so you can monitor and enforce budget limits on LLM calls. The SDK tracks raw **token counts** — input tokens, output tokens, per-model breakdowns, and session totals. Dollar-cost translation is intentionally excluded from the framework and delegated to an external service (i.e., your own billing layer).
+
+## Why tokens, not dollars?
+
+LLM pricing changes frequently and varies by provider, region, and contract. Hard-coding prices into the framework would create fragile coupling. Instead, Zil gives you:
+
+- **Accurate token counts** per request and per session
+- **Budget enforcement** in tokens (hard caps + alert thresholds)
+- **OpenTelemetry attributes** for downstream cost analysis
+
+An external service (like the upcoming Zil Runtime) can combine these token counts with live pricing to produce dollar estimates.
+
+---
+
+## Manifest configuration
+
+Add a `spec.cost` section to your `manifest.yaml`:
+
+```yaml
+spec:
+  cost:
+    max_tokens_per_request: 8192
+    max_tokens_per_session: 500000
+    alert_threshold_pct: 80
+    track_by_model: true
+```
+
+All fields are optional:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `max_tokens_per_request` | integer | — | Hard cap per LLM call. Requests exceeding this are **blocked**. |
+| `max_tokens_per_session` | integer | — | Hard cap on total tokens per agent session. |
+| `alert_threshold_pct` | integer | `80` | Emit a warning when session usage reaches this percentage of `max_tokens_per_session`. |
+| `track_by_model` | boolean | `true` | Maintain per-model token breakdowns in `zil.cost.by_model`. |
+
+If `spec.cost` is omitted entirely, cost tracking still runs passively (counting tokens with no enforcement).
+
+---
+
+## SDK usage
+
+Cost tracking is enabled by default when you call `create_agent()`. After the agent processes requests, you can inspect usage via the `zil.cost` singleton:
+
+```python
+import zil
+
+root_agent = zil.create_agent(
+    tools=[lookup_order, cancel_order],
+)
+
+# ... after the agent processes some requests ...
+
+# Session totals
+print(f"Total tokens: {zil.cost.total_tokens}")
+print(f"Input tokens: {zil.cost.total_input_tokens}")
+print(f"Output tokens: {zil.cost.total_output_tokens}")
+print(f"Requests: {zil.cost.request_count}")
+
+# Budget remaining (None if no session limit set)
+print(f"Budget remaining: {zil.cost.budget_remaining}")
+
+# Per-model breakdown
+for model, counts in zil.cost.by_model.items():
+    print(f"  {model}: {counts.total_tokens} tokens ({counts.request_count} calls)")
+```
+
+### `zil.cost` API
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `total_tokens` | `int` | Total tokens used this session |
+| `total_input_tokens` | `int` | Total input/prompt tokens |
+| `total_output_tokens` | `int` | Total output/completion tokens |
+| `request_count` | `int` | Number of LLM calls recorded |
+| `budget_remaining` | `int \| None` | Tokens left in session budget (`None` if no limit) |
+| `by_model` | `dict[str, TokenCounts]` | Per-model breakdown |
+| `requests` | `list[UsageRecord]` | Full request history |
+| `config` | `dict` | The raw `spec.cost` config |
+
+| Method | Description |
+|--------|-------------|
+| `reset()` | Clear all accumulators (keeps config and limits) |
+
+### Disabling cost tracking
+
+```python
+agent = zil.create_agent(enable_cost_tracking=False)
+```
+
+---
+
+## Budget enforcement
+
+When budget limits are configured, each LLM call returns one of three statuses:
+
+| Status | Meaning |
+|--------|---------|
+| **`allowed`** | Usage recorded normally |
+| **`warned`** | Usage recorded, but session usage crossed the alert threshold |
+| **`blocked`** | Usage **rejected** — the request exceeded a hard cap |
+
+### Per-request blocking
+
+If a single LLM response uses more tokens than `max_tokens_per_request`, the usage is **not recorded** and the callback returns `blocked`:
+
+```yaml
+spec:
+  cost:
+    max_tokens_per_request: 4096
+```
+
+An LLM call that uses 5,000 tokens would be blocked. This is useful for catching runaway tool-use loops or unexpectedly long completions.
+
+### Per-session blocking
+
+If recording a request would push the session total past `max_tokens_per_session`, it is blocked:
+
+```yaml
+spec:
+  cost:
+    max_tokens_per_session: 100000
+```
+
+Once the session reaches 100,000 tokens, subsequent requests are rejected until `zil.cost.reset()` is called or a new session starts.
+
+### Alert threshold
+
+A warning fires **once** when session usage crosses the alert percentage:
+
+```yaml
+spec:
+  cost:
+    max_tokens_per_session: 100000
+    alert_threshold_pct: 80
+```
+
+At 80,000 tokens, the callback logs:
+
+```
+WARNING zil.sdk.cost — Token budget alert: 80000 tokens used (80% of 100000 session limit)
+```
+
+The alert fires exactly once per session. After reset, it can fire again.
+
+---
+
+## Using the CostCallback directly
+
+The `CostCallback` is attached to your agent automatically and accessible as `agent._zil_cost`. You can also use it to manually record usage from custom LLM calls outside the ADK pipeline:
+
+```python
+import zil
+
+agent = zil.create_agent(tools=[...])
+
+# Manual recording
+result = agent._zil_cost.record(
+    input_tokens=150,
+    output_tokens=350,
+    model="gemini-2.0-flash",
+)
+print(result.status)           # "allowed", "warned", or "blocked"
+print(result.total_tokens)     # session total after recording
+print(result.budget_remaining) # tokens left (or None)
+```
+
+### Auto-extracting from LLM responses
+
+If you have a raw LLM response object, the callback can extract usage metadata automatically:
+
+```python
+# Gemini response (has .usage_metadata.prompt_token_count / .candidates_token_count)
+result = agent._zil_cost.record_from_response(gemini_response)
+
+# OpenAI response (has .usage.prompt_tokens / .completion_tokens)
+result = agent._zil_cost.record_from_response(openai_response)
+```
+
+Returns `None` if the response doesn't contain usage metadata.
+
+---
+
+## OpenTelemetry integration
+
+When OTel tracing is active, every `CostCallback.record()` call emits a span with these attributes:
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `llm.usage.input_tokens` | int | Input tokens for this call |
+| `llm.usage.output_tokens` | int | Output tokens for this call |
+| `llm.usage.total_tokens` | int | Total tokens for this call |
+| `llm.usage.model` | string | Model name |
+| `llm.usage.status` | string | `allowed`, `warned`, or `blocked` |
+| `llm.usage.budget_remaining` | int | Remaining session budget |
+
+These attributes can be consumed by any OTel-compatible backend (Jaeger, Grafana, Datadog, etc.) for dashboards and alerting.
+
+---
+
+## Validation
+
+`zil validate` checks your cost configuration:
+
+```
+✓ spec.cost — configured (request=8192, session=500000, alert@80%)
+```
+
+It also flags issues:
+
+```
+⚠ spec.cost — max_tokens_per_session (4096) is less than max_tokens_per_request (8192)
+⚠ spec.cost — max_tokens_per_request (16384) exceeds resource_limits.max_tokens_per_request (8192)
+```
+
+If `spec.cost` is not present:
+
+```
+⚠ spec.cost — not configured (no token budgets)
+```
+
+---
+
+## Inspect
+
+`zil inspect` shows cost configuration from a packaged archive:
+
+```
+Zil Package: my-agent
+  Version:     1.0.0
+  Framework:   adk (python)
+  Cost:        request≤8192, session≤500000, alert@80%
+```
+
+---
+
+## Example: full setup
+
+```yaml
+# manifest.yaml
+apiVersion: zil/v1
+kind: Agent
+metadata:
+  name: support-agent
+  version: 1.0.0
+spec:
+  runtime:
+    framework: adk
+    language: python
+    llm:
+      adapter: ./adapters/llm.yaml
+  identity: ./identity
+  cost:
+    max_tokens_per_request: 8192
+    max_tokens_per_session: 200000
+    alert_threshold_pct: 75
+    track_by_model: true
+```
+
+```python
+# support_agent/agent.py
+import zil
+
+def handle_ticket(ticket_id: str) -> dict:
+    """Look up a support ticket."""
+    return {"ticket_id": ticket_id, "status": "open"}
+
+root_agent = zil.create_agent(tools=[handle_ticket])
+
+# After processing
+print(f"Session used {zil.cost.total_tokens} tokens")
+print(f"Budget remaining: {zil.cost.budget_remaining}")
+
+for model, usage in zil.cost.by_model.items():
+    print(f"  {model}: {usage.total_tokens} tokens over {usage.request_count} calls")
+```

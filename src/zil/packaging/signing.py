@@ -1,4 +1,9 @@
-"""Cosign-based signing and verification for .zil archives."""
+"""Cosign-based signing and verification for .zil archives.
+
+Cosign 3.x uses the --bundle flag which produces a single JSON file
+containing the signature, certificate chain, and transparency log entry.
+This replaces the deprecated --output-signature / --output-certificate flags.
+"""
 
 from __future__ import annotations
 
@@ -14,9 +19,6 @@ logger = logging.getLogger(__name__)
 _COSIGN_NOT_FOUND_MSG = (
     "cosign is not installed or not in PATH.\n"
     "Install it from: https://docs.sigstore.dev/cosign/system_config/installation/\n"
-    "  macOS:   brew install cosign\n"
-    "  Linux:   https://github.com/sigstore/cosign/releases\n"
-    "  Docker:  gcr.io/projectsigstore/cosign"
 )
 
 
@@ -25,8 +27,7 @@ class SignResult:
     """Result of signing an archive."""
 
     signed: bool
-    signature_path: Path | None = None
-    certificate_path: Path | None = None
+    bundle_path: Path | None = None
     signature_type: str = ""
     signer_identity: str = ""
     error: str = ""
@@ -60,14 +61,13 @@ def sign_archive(
             keyless (OIDC/Sigstore) signing.
 
     Returns:
-        SignResult with paths to the .sig and .cert files.
+        SignResult with path to the .bundle file.
     """
     cosign = _find_cosign()
     if cosign is None:
         return SignResult(signed=False, error=_COSIGN_NOT_FOUND_MSG)
 
-    sig_path = archive_path.with_suffix(archive_path.suffix + ".sig")
-    cert_path = archive_path.with_suffix(archive_path.suffix + ".cert")
+    bundle_path = archive_path.with_suffix(archive_path.suffix + ".bundle")
 
     if key_path:
         # Key-based signing
@@ -75,8 +75,9 @@ def sign_archive(
             str(cosign),
             "sign-blob",
             "--key", str(key_path),
-            "--output-signature", str(sig_path),
+            "--bundle", str(bundle_path),
             "--tlog-upload=false",
+            "--yes",
             str(archive_path),
         ]
         signature_type = "cosign-key"
@@ -86,8 +87,7 @@ def sign_archive(
             str(cosign),
             "sign-blob",
             "--yes",
-            "--output-signature", str(sig_path),
-            "--output-certificate", str(cert_path),
+            "--bundle", str(bundle_path),
             str(archive_path),
         ]
         signature_type = "cosign-keyless"
@@ -108,15 +108,15 @@ def sign_archive(
         error_msg = result.stderr.strip() or result.stdout.strip()
         return SignResult(signed=False, error=f"cosign failed: {error_msg}")
 
-    # Extract signer identity from certificate if available
-    signer_identity = ""
-    if cert_path.exists():
-        signer_identity = _extract_signer_from_cert(cert_path)
+    if not bundle_path.exists():
+        return SignResult(signed=False, error="cosign did not produce a bundle file")
+
+    # Extract signer identity from bundle certificate
+    signer_identity = _extract_signer_from_bundle(bundle_path)
 
     return SignResult(
         signed=True,
-        signature_path=sig_path if sig_path.exists() else None,
-        certificate_path=cert_path if cert_path.exists() else None,
+        bundle_path=bundle_path,
         signature_type=signature_type,
         signer_identity=signer_identity,
     )
@@ -129,7 +129,7 @@ def verify_archive(
 ) -> VerifyResult:
     """Verify a signed .zil archive using cosign.
 
-    Looks for .sig and .cert files alongside the archive.
+    Looks for a .bundle file alongside the archive.
 
     Args:
         archive_path: Path to the .zil archive.
@@ -142,11 +142,13 @@ def verify_archive(
     if cosign is None:
         return VerifyResult(verified=False, error=_COSIGN_NOT_FOUND_MSG)
 
-    sig_path = archive_path.with_suffix(archive_path.suffix + ".sig")
-    cert_path = archive_path.with_suffix(archive_path.suffix + ".cert")
+    bundle_path = archive_path.with_suffix(archive_path.suffix + ".bundle")
 
-    if not sig_path.exists():
-        return VerifyResult(verified=False, error="No signature file found (.sig)")
+    if not bundle_path.exists():
+        return VerifyResult(
+            verified=False,
+            error="No bundle file found (.bundle). Sign the archive first with: zil pack --sign",
+        )
 
     if key_path:
         # Key-based verification
@@ -154,23 +156,19 @@ def verify_archive(
             str(cosign),
             "verify-blob",
             "--key", str(key_path),
-            "--signature", str(sig_path),
+            "--bundle", str(bundle_path),
+            "--new-bundle-format",
             str(archive_path),
         ]
     else:
-        # Keyless verification (requires certificate)
-        if not cert_path.exists():
-            return VerifyResult(
-                verified=False,
-                error="No certificate file found (.cert). Use --key for key-based verification.",
-            )
+        # Keyless verification via bundle (includes cert + tlog entry)
         cmd = [
             str(cosign),
             "verify-blob",
-            "--certificate", str(cert_path),
+            "--bundle", str(bundle_path),
+            "--new-bundle-format",
             "--certificate-identity-regexp", ".*",
             "--certificate-oidc-issuer-regexp", ".*",
-            "--signature", str(sig_path),
             str(archive_path),
         ]
 
@@ -190,31 +188,49 @@ def verify_archive(
         error_msg = result.stderr.strip() or result.stdout.strip()
         return VerifyResult(verified=False, error=f"Verification failed: {error_msg}")
 
-    signer_identity = ""
-    if cert_path.exists():
-        signer_identity = _extract_signer_from_cert(cert_path)
+    signer_identity = _extract_signer_from_bundle(bundle_path)
 
     return VerifyResult(verified=True, signer_identity=signer_identity)
 
 
-def _extract_signer_from_cert(cert_path: Path) -> str:
-    """Try to extract the signer identity from a Sigstore certificate."""
+def _extract_signer_from_bundle(bundle_path: Path) -> str:
+    """Try to extract the signer identity from a Sigstore bundle."""
     try:
-        # Use openssl to extract the SAN from the cert
+        bundle = json.loads(bundle_path.read_text())
+
+        # Sigstore bundle format: verificationMaterial.x509CertificateChain.certificates[0].rawBytes
+        certs = (
+            bundle.get("verificationMaterial", {})
+            .get("x509CertificateChain", {})
+            .get("certificates", [])
+        )
+        if not certs:
+            return ""
+
+        # Decode the leaf certificate and extract SAN via openssl
+        cert_b64 = certs[0].get("rawBytes", "")
+        if not cert_b64:
+            return ""
+
+        pem = (
+            "-----BEGIN CERTIFICATE-----\n"
+            + cert_b64
+            + "\n-----END CERTIFICATE-----\n"
+        )
         result = subprocess.run(
-            ["openssl", "x509", "-in", str(cert_path), "-noout", "-ext", "subjectAltName"],
+            ["openssl", "x509", "-noout", "-ext", "subjectAltName"],
+            input=pem,
             capture_output=True,
             text=True,
             timeout=10,
         )
         if result.returncode == 0:
-            # Parse out the email from SAN
             for line in result.stdout.splitlines():
                 line = line.strip()
                 if line.startswith("email:"):
                     return line.replace("email:", "").strip()
                 if line.startswith("URI:"):
                     return line.replace("URI:", "").strip()
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, KeyError):
         pass
     return ""

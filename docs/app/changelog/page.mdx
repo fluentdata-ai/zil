@@ -5,6 +5,25 @@ All notable changes to the `zil-ai` package are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.11](https://github.com/fluentdata-co/zil/compare/v0.1.10...v0.1.11) — 2026-05-13
+
+### Added
+
+- **[Token-based cost tracking](/cost)** — new `spec.cost` manifest section for declaring token budgets (`max_tokens_per_request`, `max_tokens_per_session`, `alert_threshold_pct`, `track_by_model`). The SDK tracks raw token counts; dollar pricing is purposefully left out of the SDK for flexibility. 
+The vision is that there will be an external service (part of the runtime) that can convert token counts to dollar amounts.
+
+- **`zil.cost` singleton** — module-level cost tracker: `zil.cost.total_tokens`, `zil.cost.by_model`, `zil.cost.budget_remaining`, `zil.cost.reset()`.
+- **`CostTracker` class** — thread-safe token usage accumulator with per-request and per-session budget enforcement.
+- **`CostCallback`** — ADK-compatible callback that extracts usage metadata from LLM responses (Gemini, OpenAI, Anthropic) and emits OTel span attributes.
+- **`create_agent(enable_cost_tracking=True)`** — automatically initializes cost tracking from `spec.cost`.
+- **`zil validate` cost checks** — warns if `spec.cost` is absent, flags budget inconsistencies.
+- **`zil inspect` cost display** — shows budget configuration from archived manifests.
+- **[`zil pack --sign`](/signing)** — signs the `.zil` archive using cosign (keyless/Sigstore OIDC by default). Produces a Sigstore `.bundle` file.
+- **`zil pack --sign --key <path>`** — key-based cosign signing for CI environments.
+- **`zil inspect --verify`** — verifies the cosign signature of a `.zil` archive.
+- **`zil push` signature attachment** — automatically pushes the `.bundle` alongside the OCI artifact.
+- 45 new tests; 295 total tests.
+
 ## [0.1.10](https://github.com/fluentdata-co/zil/compare/v0.1.9...v0.1.10) — 2026-05-12
 
 ### Added
