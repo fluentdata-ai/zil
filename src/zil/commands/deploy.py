@@ -216,6 +216,7 @@ def _deploy_cloud_run(
     trace: bool,
     with_ui: bool,
     env_vars: dict[str, str] | None = None,
+    allow_unauthenticated: bool = False,
 ) -> None:
     """Deploy to Cloud Run via adk deploy cloud_run."""
     if not shutil.which("adk"):
@@ -264,11 +265,16 @@ def _deploy_cloud_run(
     # The agent path is the module directory
     cmd.append(str(module_path))
 
-    # Inject env vars via gcloud -- separator
+    # Inject extra gcloud flags via -- separator
+    gcloud_args: list[str] = []
     if env_vars:
         env_pairs = ",".join(f"{k}={v}" for k, v in env_vars.items())
+        gcloud_args.append(f"--set-env-vars={env_pairs}")
+    if allow_unauthenticated:
+        gcloud_args.append("--allow-unauthenticated")
+    if gcloud_args:
         cmd.append("--")
-        cmd.append(f"--set-env-vars={env_pairs}")
+        cmd.extend(gcloud_args)
 
     console.print(
         f"→ Deploying [bold]{agent_name}[/bold] to Cloud Run "
@@ -347,6 +353,11 @@ def _deploy_cloud_run(
     default=None,
     help="Dotenv file with env var values (alternative to interactive prompts).",
 )
+@click.option(
+    "--allow-unauthenticated", "allow_unauthenticated",
+    is_flag=True, default=False,
+    help="Allow unauthenticated access to the Cloud Run service.",
+)
 def deploy(
     project_dir: Path,
     gcp_project: str | None,
@@ -357,12 +368,14 @@ def deploy(
     skip_evals: bool,
     from_ref: str | None,
     env_file: Path | None,
+    allow_unauthenticated: bool,
 ) -> None:
     """Deploy the agent to Cloud Run."""
     # If --from is specified, deploy from artifact
     if from_ref:
         _deploy_from_artifact(
             from_ref, gcp_project, gcp_region, service, trace, with_ui, env_file,
+            allow_unauthenticated,
         )
         return
 
@@ -414,6 +427,7 @@ def deploy(
     _deploy_cloud_run(
         project_dir, agent_name, module_dir,
         project, region, service, trace, with_ui, env_vars,
+        allow_unauthenticated,
     )
 
 
@@ -425,6 +439,7 @@ def _deploy_from_artifact(
     trace: bool,
     with_ui: bool,
     env_file: Path | None = None,
+    allow_unauthenticated: bool = False,
 ) -> None:
     """Deploy from a .zil archive or OCI registry reference."""
     import tempfile
@@ -495,4 +510,5 @@ def _deploy_from_artifact(
     _deploy_cloud_run(
         project_dir, agent_name, module_dir,
         project, region, service, trace, with_ui, env_vars,
+        allow_unauthenticated,
     )
