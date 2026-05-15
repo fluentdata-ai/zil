@@ -189,6 +189,7 @@ Options:
     --with-ui                Include ADK web UI in Cloud Run deploy
     --trace                  Enable Cloud Trace export
     --skip-evals             Skip pre-deploy eval check
+    --allow-unauthenticated  Allow unauthenticated access to the Cloud Run service
 
 Environment variable resolution (in priority order):
 1. Process environment variables

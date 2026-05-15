@@ -5,6 +5,12 @@ All notable changes to the `zil-ai` package will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.12] — 2026-05-15
+
+### Added
+
+- **`zil deploy --allow-unauthenticated`** — new flag to allow unauthenticated access to the Cloud Run service. Passes `--allow-unauthenticated` to `gcloud run deploy` via the `--` separator. Works with both direct deploy and `--from` artifact deploy.
+
 ## [0.1.11] — 2026-05-13
 
 ### Added
@@ -235,6 +241,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - JSON Schema for Zil v1 manifest (`spec/v1/manifest.schema.json`).
 - 15 CLI tests.
 
+[0.1.12]: https://github.com/fluentdata-co/zil/compare/v0.1.11...v0.1.12
+[0.1.11]: https://github.com/fluentdata-co/zil/compare/v0.1.10...v0.1.11
+[0.1.10]: https://github.com/fluentdata-co/zil/compare/v0.1.9...v0.1.10
+[0.1.9]: https://github.com/fluentdata-co/zil/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/fluentdata-co/zil/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/fluentdata-co/zil/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/fluentdata-co/zil/compare/v0.1.5...v0.1.6
