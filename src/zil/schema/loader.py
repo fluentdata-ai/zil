@@ -94,6 +94,7 @@ def validate_project(project_dir: Path) -> ValidationResult:
     _check_env(project_dir, manifest, result)
     _check_guardrails(project_dir, manifest, result)
     _check_cost(manifest, result)
+    _check_tools(project_dir, manifest, result)
 
     return result
 
@@ -372,3 +373,165 @@ def _check_cost(manifest: dict, result: ValidationResult) -> None:
                 f"max_tokens_per_request ({max_per_request})",
             )
         )
+
+
+def _check_tools(project_dir: Path, manifest: dict, result: ValidationResult) -> None:
+    """Validate spec.tools configuration (MCP servers + host dependencies)."""
+    import shutil
+
+    spec = manifest.get("spec", {})
+    tools_ref = spec.get("tools")
+
+    if not tools_ref:
+        return
+
+    # Resolve tools config: inline dict or path to tools/ directory
+    if isinstance(tools_ref, dict):
+        tools_config = tools_ref
+    else:
+        tools_dir = project_dir / tools_ref
+        config_path = tools_dir / "config.yaml"
+        if config_path.is_file():
+            try:
+                tools_config = yaml.safe_load(config_path.read_text())
+            except yaml.YAMLError as e:
+                result.checks.append(
+                    CheckResult("fail", f"tools/config.yaml — invalid YAML: {e}")
+                )
+                return
+        else:
+            result.checks.append(
+                CheckResult("fail", f"spec.tools references '{tools_ref}' but config.yaml not found")
+            )
+            return
+
+    if not tools_config or not isinstance(tools_config, dict):
+        result.checks.append(
+            CheckResult("warn", "spec.tools — empty or not a mapping")
+        )
+        return
+
+    mcp_servers = tools_config.get("mcp_servers", [])
+    host_deps = tools_config.get("host_dependencies", [])
+
+    # Collect declared env var names for cross-referencing
+    env_declarations = spec.get("env", [])
+    declared_env_names = {e.get("name") for e in env_declarations if e.get("name")}
+
+    # --- MCP server checks ---
+    if not mcp_servers:
+        result.checks.append(
+            CheckResult("pass", "spec.tools — configured (no MCP servers)")
+        )
+    else:
+        server_names: list[str] = []
+        needs_node = False
+        needs_any_host_dep: set[str] = set()
+
+        for i, server in enumerate(mcp_servers):
+            name = server.get("name", f"server[{i}]")
+            transport = server.get("transport")
+            server_names.append(name)
+
+            if transport == "stdio":
+                command = server.get("command")
+                if not command:
+                    result.checks.append(
+                        CheckResult(
+                            "fail",
+                            f"spec.tools.mcp_servers[{name}] — transport=stdio but no command",
+                        )
+                    )
+                else:
+                    # Dev-time check: is the command available?
+                    if not shutil.which(command):
+                        result.checks.append(
+                            CheckResult(
+                                "warn",
+                                f"spec.tools.mcp_servers[{name}] — command '{command}' "
+                                "not found in PATH (may work in container)",
+                            )
+                        )
+                    if command in ("npx", "node", "npm"):
+                        needs_node = True
+                        needs_any_host_dep.add("nodejs")
+                    if command in ("uvx", "uv"):
+                        needs_any_host_dep.add("uv")
+
+            elif transport == "sse":
+                if not server.get("url"):
+                    result.checks.append(
+                        CheckResult(
+                            "fail",
+                            f"spec.tools.mcp_servers[{name}] — transport=sse but no url",
+                        )
+                    )
+
+            # Security: warn if no tool_filter
+            tool_filter = server.get("tool_filter")
+            if not tool_filter:
+                result.checks.append(
+                    CheckResult(
+                        "warn",
+                        f"spec.tools.mcp_servers[{name}] — no tool_filter "
+                        "(all tools exposed — consider restricting for security)",
+                    )
+                )
+
+            # Cross-reference ${VAR} in args and env
+            for arg in server.get("args", []):
+                _check_env_refs(arg, name, "args", declared_env_names, result)
+            for val in server.get("env", {}).values():
+                _check_env_refs(val, name, "env", declared_env_names, result)
+            if server.get("url"):
+                _check_env_refs(server["url"], name, "url", declared_env_names, result)
+            for val in server.get("headers", {}).values():
+                _check_env_refs(val, name, "headers", declared_env_names, result)
+
+        result.checks.append(
+            CheckResult(
+                "pass",
+                f"spec.tools — {len(mcp_servers)} MCP server(s): {', '.join(server_names)}",
+            )
+        )
+
+        # Warn if MCP servers need host tools but host_dependencies is empty
+        if needs_any_host_dep and not host_deps:
+            result.checks.append(
+                CheckResult(
+                    "warn",
+                    f"spec.tools — MCP servers use {', '.join(sorted(needs_any_host_dep))} "
+                    "but no host_dependencies declared",
+                )
+            )
+
+    # --- Host dependencies checks ---
+    if host_deps:
+        result.checks.append(
+            CheckResult(
+                "pass",
+                f"spec.tools.host_dependencies — {len(host_deps)} declared: {', '.join(host_deps)}",
+            )
+        )
+
+
+def _check_env_refs(
+    value: str,
+    server_name: str,
+    field: str,
+    declared_env_names: set[str],
+    result: ValidationResult,
+) -> None:
+    """Warn if a ``${VAR}`` reference in an MCP server config is not declared in spec.env."""
+    import re
+
+    for match in re.finditer(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", value):
+        var_name = match.group(1)
+        if var_name not in declared_env_names:
+            result.checks.append(
+                CheckResult(
+                    "warn",
+                    f"spec.tools.mcp_servers[{server_name}].{field} — "
+                    f"references '${{{var_name}}}' but it is not declared in spec.env",
+                )
+            )

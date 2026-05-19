@@ -22,6 +22,7 @@ class ProjectContext:
         observability: dict[str, Any] | None = None,
         env_declarations: list[dict[str, Any]] | None = None,
         cost_config: dict[str, Any] | None = None,
+        tools_config: dict[str, Any] | None = None,
     ) -> None:
         self.project_dir = project_dir
         self.manifest = manifest
@@ -30,6 +31,7 @@ class ProjectContext:
         self.observability = observability
         self.env_declarations = env_declarations or []
         self.cost_config = cost_config
+        self.tools_config = tools_config
 
     @property
     def name(self) -> str:
@@ -89,6 +91,7 @@ def load_project(project_dir: Path | None = None) -> ProjectContext:
     identity = _load_identity(root, manifest)
     llm_adapter = _load_llm_adapter(root, manifest)
     observability = _load_observability(root, manifest)
+    tools_config = _load_tools(root, manifest)
 
     env_declarations = manifest.get("spec", {}).get("env", [])
     cost_config = manifest.get("spec", {}).get("cost")
@@ -101,6 +104,7 @@ def load_project(project_dir: Path | None = None) -> ProjectContext:
         observability=observability,
         env_declarations=env_declarations,
         cost_config=cost_config,
+        tools_config=tools_config,
     )
 
 
@@ -147,6 +151,25 @@ def _load_observability(root: Path, manifest: dict[str, Any]) -> dict[str, Any] 
     obs_path = (root / obs_ref / "config.yaml").resolve()
     if obs_path.is_file():
         return _load_yaml(obs_path)
+    return None
+
+
+def _load_tools(root: Path, manifest: dict[str, Any]) -> dict[str, Any] | None:
+    """Load tools configuration (inline object or from tools/ directory)."""
+    tools_ref = manifest.get("spec", {}).get("tools")
+    if not tools_ref:
+        return None
+
+    # Inline object: spec.tools is a dict with mcp_servers / host_dependencies
+    if isinstance(tools_ref, dict):
+        return tools_ref
+
+    # String path: resolve to a directory and look for config.yaml
+    tools_dir = (root / tools_ref).resolve()
+    config_path = tools_dir / "config.yaml"
+    if config_path.is_file():
+        return _load_yaml(config_path)
+
     return None
 
 

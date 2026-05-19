@@ -469,7 +469,7 @@ class TestAuditCLI:
             parsed = json.loads(result.output)
             assert "project" in parsed
             assert "sections" in parsed
-            assert len(parsed["sections"]) == 7
+            assert len(parsed["sections"]) == 8
 
     def test_audit_fix_flag(self, tmp_path):
         with runner.isolated_filesystem(temp_dir=tmp_path):

@@ -114,6 +114,20 @@ def _print_summary(archive: Path, meta) -> None:
         parts.append(f"alert@{alert}%")
         console.print(f"  Cost:        {', '.join(parts)}")
 
+    # Tools / MCP servers
+    if meta.tools_config:
+        mcp_servers = meta.tools_config.get("mcp_servers", [])
+        host_deps = meta.tools_config.get("host_dependencies", [])
+        if mcp_servers:
+            names = [s.get("name", "?") for s in mcp_servers]
+            transports = {s.get("transport", "?") for s in mcp_servers}
+            console.print(
+                f"  MCP servers: {len(mcp_servers)} ({', '.join(names)}) "
+                f"[dim]transport: {', '.join(sorted(transports))}[/dim]"
+            )
+        if host_deps:
+            console.print(f"  Host deps:   {', '.join(host_deps)}")
+
     console.print()
 
     # Component table

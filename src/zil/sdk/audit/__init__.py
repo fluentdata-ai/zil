@@ -31,6 +31,7 @@ class Category(StrEnum):
     INSTRUCTION_CONSISTENCY = "instruction_consistency"
     CONTEXT_WINDOW = "context_window"
     IDENTITY_HARDENING = "identity_hardening"
+    MCP_PERMISSIONS = "mcp_permissions"
 
 
 @dataclass

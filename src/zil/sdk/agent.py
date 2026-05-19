@@ -61,6 +61,7 @@ def create_agent(
     enable_telemetry: bool = True,
     enable_guardrails: bool = True,
     enable_cost_tracking: bool = True,
+    enable_mcp: bool = True,
 ) -> Any:
     """Create an ADK LlmAgent wired from the Zil project manifest.
 
@@ -82,6 +83,9 @@ def create_agent(
             ``identity/guardrails.yaml`` at runtime (default ``True``).
         enable_cost_tracking: Track token usage and enforce budgets from
             ``spec.cost`` in the manifest (default ``True``).
+        enable_mcp: Auto-connect to MCP servers declared in
+            ``spec.tools.mcp_servers`` (default ``True``).  Set to ``False``
+            in tests or when wiring MCP toolsets manually.
 
     Returns:
         A ``google.adk.agents.LlmAgent`` instance.
@@ -174,12 +178,27 @@ def create_agent(
 
     resolved_name = name or ctx.name.replace("-", "_")
 
+    # Auto-wire MCP toolsets from spec.tools.mcp_servers
+    mcp_toolsets: list[Any] = []
+    if enable_mcp and ctx.tools_config:
+        mcp_servers = ctx.tools_config.get("mcp_servers", [])
+        if mcp_servers:
+            from zil.sdk.mcp import create_mcp_toolsets_adk
+
+            mcp_toolsets = create_mcp_toolsets_adk(mcp_servers)
+            logger.info(
+                "MCP auto-wiring: %d server(s) connected",
+                len(mcp_toolsets),
+            )
+
+    all_tools: list[Any] = list(tools or []) + mcp_toolsets
+
     agent = LlmAgent(
         model=resolved_model,
         name=resolved_name,
         description=description or ctx.description,
         instruction=resolved_instruction,
-        tools=tools or [],
+        tools=all_tools,
     )
 
     # Attach the guardrail callback to the agent for direct access

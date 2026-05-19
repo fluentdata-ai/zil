@@ -33,6 +33,7 @@ def _manifest(c: InitConfig) -> str:
         else '  # observability: ./observability'
     )
     env_vars = _manifest_env_vars(c)
+    tools_block = _manifest_tools_block(c)
     return f"""\
 apiVersion: zil/v1
 kind: Agent
@@ -64,6 +65,7 @@ spec:
   #   track_by_model: true
   env:
 {env_vars}
+{tools_block}
 """
 
 
@@ -95,6 +97,89 @@ def _manifest_env_vars(c: InitConfig) -> str:
             "      secret: false",
         ])
     return "\n".join(lines)
+
+
+def _manifest_tools_block(c: InitConfig) -> str:
+    """Generate the tools block for the manifest template."""
+    if not c.mcp_preset:
+        return "  # tools:\n  #   mcp_servers: []\n  #   host_dependencies: []"
+
+    if c.mcp_preset == "filesystem":
+        return """\
+  tools:
+    mcp_servers:
+      - name: filesystem
+        transport: stdio
+        command: npx
+        args: ["-y", "@modelcontextprotocol/server-filesystem", "${WORKSPACE_DIR}"]
+        tool_filter:
+          - read_file
+          - write_file
+          - list_directory
+          - search_files
+    host_dependencies:
+      - nodejs"""
+
+    if c.mcp_preset == "git":
+        return """\
+  tools:
+    mcp_servers:
+      - name: git
+        transport: stdio
+        command: uvx
+        args: ["mcp-server-git", "--repository", "${REPO_PATH}"]
+        tool_filter:
+          - git_log
+          - git_diff
+          - git_show
+          - git_status
+    host_dependencies:
+      - git"""
+
+    # custom
+    return """\
+  tools:
+    mcp_servers:
+      - name: my-server
+        transport: stdio
+        command: uvx
+        args: ["my-mcp-server"]
+        tool_filter: []
+    host_dependencies: []"""
+
+
+def _dockerfile_host_deps(c: InitConfig) -> str:
+    """Generate apt-get install lines for host dependencies in Dockerfile."""
+    # Map well-known names to apt packages
+    _APT_MAP = {
+        "git": "git",
+        "nodejs": "nodejs npm",
+        "node": "nodejs npm",
+        "curl": "curl",
+        "jq": "jq",
+    }
+
+    if not c.mcp_preset:
+        return ""
+
+    # Determine deps from preset
+    deps: list[str] = []
+    if c.mcp_preset == "filesystem":
+        deps = ["nodejs"]
+    elif c.mcp_preset == "git":
+        deps = ["git"]
+    elif c.mcp_preset == "custom":
+        return ""
+
+    if not deps:
+        return ""
+
+    apt_packages = " \\\n    ".join(_APT_MAP.get(d, d) for d in deps)
+    return (
+        f"RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
+        f"    {apt_packages} \\\n"
+        f"    && rm -rf /var/lib/apt/lists/*\n"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -422,7 +507,7 @@ import zil
 # Create the agent. Zil reads manifest.yaml, identity/, and adapters/
 # automatically and wires them into an ADK LlmAgent.
 root_agent = zil.create_agent(
-    tools=[],  # add your tool functions here
+    tools=[],  # add your tool functions here (MCP servers auto-wired from manifest)
     project_dir=Path(__file__).parent,
 )
 '''
@@ -443,7 +528,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Stage 2: runtime
 FROM python:3.12-slim
-WORKDIR /app
+{_dockerfile_host_deps(c)}WORKDIR /app
 COPY --from=deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=deps /usr/local/bin/ /usr/local/bin/
 COPY . .

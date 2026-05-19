@@ -11,6 +11,7 @@ console = Console()
 
 
 LLM_PROVIDERS = ["gemini", "anthropic", "openai", "vertex"]
+MCP_PRESETS = ["none", "filesystem", "git", "custom"]
 
 
 @click.command()
@@ -25,6 +26,13 @@ LLM_PROVIDERS = ["gemini", "anthropic", "openai", "vertex"]
 @click.option("--no-evals", is_flag=True, help="Skip eval suite scaffolding.")
 @click.option("--no-otel", is_flag=True, help="Skip OpenTelemetry instrumentation.")
 @click.option(
+    "--mcp",
+    "mcp_preset",
+    type=click.Choice(MCP_PRESETS, case_sensitive=False),
+    default=None,
+    help="Include MCP server scaffolding (default: none).",
+)
+@click.option(
     "--non-interactive",
     is_flag=True,
     help="Use defaults for all prompts.",
@@ -34,6 +42,7 @@ def init(
     llm_provider: str | None,
     no_evals: bool,
     no_otel: bool,
+    mcp_preset: str | None,
     non_interactive: bool,
 ) -> None:
     """Scaffold a new Zil agent project.
@@ -51,6 +60,9 @@ def init(
     llm_provider = llm_provider or _resolve(
         "LLM provider", LLM_PROVIDERS, "gemini", non_interactive
     )
+    mcp_preset = mcp_preset or _resolve(
+        "MCP servers", MCP_PRESETS, "none", non_interactive
+    )
 
     include_evals = not no_evals
     include_otel = not no_otel
@@ -64,6 +76,7 @@ def init(
         deploy_target="cloud-run",
         include_evals=include_evals,
         include_otel=include_otel,
+        mcp_preset=mcp_preset if mcp_preset != "none" else None,
     )
 
     console.print()
@@ -104,6 +117,7 @@ class InitConfig:
         deploy_target: str,
         include_evals: bool,
         include_otel: bool,
+        mcp_preset: str | None = None,
     ) -> None:
         self.name = name
         self.framework = framework
@@ -113,6 +127,7 @@ class InitConfig:
         self.deploy_target = deploy_target
         self.include_evals = include_evals
         self.include_otel = include_otel
+        self.mcp_preset = mcp_preset
 
     @property
     def module_name(self) -> str:

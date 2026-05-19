@@ -66,9 +66,17 @@
           "type": "string",
           "description": "Path to the memory configuration."
         },
-        "mcp_servers": {
-          "type": "string",
-          "description": "Path to the MCP server configurations directory."
+        "tools": {
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "Path to the tools configuration directory."
+            },
+            {
+              "$ref": "#/$defs/toolsConfig"
+            }
+          ],
+          "description": "Tool and MCP server configuration (inline object or path to tools/ directory)."
         },
         "evals": {
           "type": "string",
@@ -148,6 +156,78 @@
           "type": "boolean",
           "default": true,
           "description": "Break down token usage per model in metrics."
+        }
+      }
+    },
+    "toolsConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mcp_servers": {
+          "type": "array",
+          "description": "MCP servers the agent connects to.",
+          "items": {
+            "$ref": "#/$defs/mcpServer"
+          }
+        },
+        "host_dependencies": {
+          "type": "array",
+          "description": "System packages required in the container (e.g. git, nodejs).",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "mcpServer": {
+      "type": "object",
+      "required": ["name", "transport"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "description": "Unique identifier for this MCP server."
+        },
+        "transport": {
+          "type": "string",
+          "enum": ["stdio", "sse"],
+          "description": "Connection transport type."
+        },
+        "command": {
+          "type": "string",
+          "description": "Command to start the MCP server process (stdio transport)."
+        },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Arguments for the server command."
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "URL of a remote MCP server (sse transport)."
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "HTTP headers for SSE connections."
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Environment variables passed to the server process."
+        },
+        "tool_filter": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Expose only these tools (empty array or omitted = all tools)."
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10,
+          "description": "Connection timeout in seconds."
         }
       }
     },
