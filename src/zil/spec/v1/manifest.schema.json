@@ -228,6 +228,14 @@
           "minimum": 1,
           "default": 10,
           "description": "Connection timeout in seconds."
+        },
+        "source": {
+          "type": "string",
+          "description": "Path to MCP server source directory to bundle during pack/deploy."
+        },
+        "entry_point": {
+          "type": "string",
+          "description": "Entry point relative to source directory (e.g. dist/index.js, server.py). Used to resolve the bundled path at runtime."
         }
       }
     },

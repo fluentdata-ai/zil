@@ -39,6 +39,40 @@ class ArchiveMetadata:
 _BUNDLE_DIRS = ["identity", "adapters", "evals", "observability"]
 _BUNDLE_FILES = ["manifest.yaml"]
 
+# Default directories/files excluded when bundling tool sources.
+# Override or extend via a .bundleignore file in the tool directory.
+_DEFAULT_BUNDLE_EXCLUDES = {
+    ".git",
+    ".github",
+    ".env",
+    ".env.example",
+    "src",
+    "tests",
+    "docs",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".bundleignore",
+}
+
+
+def _load_bundle_excludes(source_dir: Path) -> set[str]:
+    """Load exclusion patterns from .bundleignore or fall back to defaults."""
+    ignore_file = source_dir / ".bundleignore"
+    if ignore_file.is_file():
+        extras = {
+            line.strip()
+            for line in ignore_file.read_text().splitlines()
+            if line.strip() and not line.startswith("#")
+        }
+        return _DEFAULT_BUNDLE_EXCLUDES | extras
+    return _DEFAULT_BUNDLE_EXCLUDES
+
+
+def _is_excluded(rel_path: Path, excludes: set[str]) -> bool:
+    """Check if a relative path matches any exclusion entry."""
+    return any(part in excludes for part in rel_path.parts)
+
 
 def build_archive(
     project_dir: Path,
@@ -86,6 +120,28 @@ def build_archive(
                 if file_path.is_file() and "__pycache__" not in str(file_path):
                     arcname = str(file_path.relative_to(project_dir))
                     tar.add(file_path, arcname=arcname)
+
+        # Add MCP server sources (tools/{name}/)
+        spec = manifest.get("spec", {})
+        tools_config = spec.get("tools")
+        if isinstance(tools_config, dict):
+            mcp_servers = tools_config.get("mcp_servers", [])
+            for server in mcp_servers:
+                source = server.get("source")
+                if not source:
+                    continue
+                server_name = server["name"]
+                source_path = (project_dir / source).resolve()
+                if not source_path.is_dir():
+                    continue
+                excludes = _load_bundle_excludes(source_path)
+                for file_path in sorted(source_path.rglob("*")):
+                    if file_path.is_file():
+                        rel = file_path.relative_to(source_path)
+                        if _is_excluded(rel, excludes):
+                            continue
+                        arcname = f"tools/{server_name}/{rel}"
+                        tar.add(file_path, arcname=arcname)
 
         # Add SBOM
         if sbom:

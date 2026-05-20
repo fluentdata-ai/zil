@@ -18,7 +18,17 @@ console = Console()
     required=True,
     help="OCI registry URL (e.g. us-docker.pkg.dev/my-project/agents).",
 )
-def push(archive: Path, registry: str) -> None:
+@click.option(
+    "--username",
+    default=None,
+    help="Registry username (e.g. oauth2accesstoken for GCP).",
+)
+@click.option(
+    "--password",
+    default=None,
+    help="Registry password or token (e.g. gcloud auth print-access-token).",
+)
+def push(archive: Path, registry: str, username: str | None, password: str | None) -> None:
     """Push a .zil archive to an OCI-compatible registry.
 
     Uploads the archive as an OCI artifact using oras. Supports any
@@ -38,7 +48,7 @@ def push(archive: Path, registry: str) -> None:
     from zil.packaging.registry import push_archive
 
     try:
-        reference = push_archive(archive, registry)
+        reference = push_archive(archive, registry, username=username, password=password)
     except ImportError as e:
         console.print(f"[red]Error:[/red] {e}", highlight=False)
         raise SystemExit(1)

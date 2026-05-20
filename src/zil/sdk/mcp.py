@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -49,11 +50,17 @@ def _resolve_env_refs_in_dict(mapping: dict[str, str]) -> dict[str, str]:
 
 def create_mcp_toolsets_adk(
     mcp_servers: list[dict[str, Any]],
+    project_dir: Path | None = None,
 ) -> list[Any]:
     """Create ADK ``McpToolset`` instances from Zil MCP server declarations.
 
     Each entry in *mcp_servers* is a dict matching the ``mcpServer`` schema
     (name, transport, command/url, args, env, tool_filter, timeout).
+
+    If *project_dir* is given and a server has a ``source`` field, the first
+    entry in ``args`` is rewritten to the bundled path at
+    ``{project_dir}/tools/{name}/dist/index.js`` (the convention used by
+    ``zil pack``).
 
     Returns a list of ``McpToolset`` instances ready to pass to
     ``LlmAgent(tools=...)``.
@@ -91,6 +98,30 @@ def create_mcp_toolsets_adk(
                 continue
 
             args = _resolve_env_refs_in_list(server.get("args", []))
+
+            # Resolve tool paths from project_dir.
+            # Priority: entry_point (bundled) → relative args[0] → absolute (as-is)
+            if project_dir and args:
+                entry_point = server.get("entry_point")
+                source = server.get("source")
+
+                if entry_point and source:
+                    # Use the declared entry_point relative to the bundled
+                    # tools/{name}/ directory (works in containers and locally).
+                    bundled = project_dir / "tools" / name / entry_point
+                    if bundled.is_file():
+                        args[0] = str(bundled)
+                        logger.info(
+                            "MCP server %r: resolved entry_point → %s",
+                            name, args[0],
+                        )
+
+                # Fall back to resolving relative paths from project_dir
+                if args[0].startswith("./") or args[0].startswith("../"):
+                    resolved_path = (project_dir / args[0]).resolve()
+                    if resolved_path.is_file():
+                        args[0] = str(resolved_path)
+
             env_vars = _resolve_env_refs_in_dict(server.get("env", {}))
 
             # Merge with current environment so the child process inherits

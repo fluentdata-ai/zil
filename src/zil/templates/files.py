@@ -148,38 +148,13 @@ def _manifest_tools_block(c: InitConfig) -> str:
     host_dependencies: []"""
 
 
-def _dockerfile_host_deps(c: InitConfig) -> str:
-    """Generate apt-get install lines for host dependencies in Dockerfile."""
-    # Map well-known names to apt packages
-    _APT_MAP = {
-        "git": "git",
-        "nodejs": "nodejs npm",
-        "node": "nodejs npm",
-        "curl": "curl",
-        "jq": "jq",
-    }
-
-    if not c.mcp_preset:
-        return ""
-
-    # Determine deps from preset
-    deps: list[str] = []
-    if c.mcp_preset == "filesystem":
-        deps = ["nodejs"]
-    elif c.mcp_preset == "git":
-        deps = ["git"]
-    elif c.mcp_preset == "custom":
-        return ""
-
-    if not deps:
-        return ""
-
-    apt_packages = " \\\n    ".join(_APT_MAP.get(d, d) for d in deps)
-    return (
-        f"RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
-        f"    {apt_packages} \\\n"
-        f"    && rm -rf /var/lib/apt/lists/*\n"
-    )
+def _host_deps_for_preset(preset: str | None) -> list[str]:
+    """Return host dependency names for an MCP preset."""
+    if preset == "filesystem":
+        return ["nodejs"]
+    if preset == "git":
+        return ["git"]
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -518,23 +493,12 @@ root_agent = zil.create_agent(
 # ---------------------------------------------------------------------------
 @_register("Dockerfile")
 def _dockerfile(c: InitConfig) -> str:
-    return f"""\
-# Multi-stage build for {c.name}
-# Stage 1: dependencies
-FROM python:3.12-slim AS deps
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+    from zil.packaging.dockerfile import generate_dockerfile
 
-# Stage 2: runtime
-FROM python:3.12-slim
-{_dockerfile_host_deps(c)}WORKDIR /app
-COPY --from=deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
-COPY --from=deps /usr/local/bin/ /usr/local/bin/
-COPY . .
-EXPOSE 8000
-CMD ["adk", "web", ".", "--port", "8000", "--host", "0.0.0.0"]
-"""
+    return generate_dockerfile(
+        name=c.name,
+        host_deps=_host_deps_for_preset(c.mcp_preset),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -552,6 +516,10 @@ dist/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+tools/*/.git/
+tools/*/src/
+tools/*/tests/
+tools/*/docs/
 """
 
 
@@ -727,6 +695,9 @@ venv/
 
 # Zil
 *.zil
+
+# Tools (bundled MCP servers / CLI tools)
+tools/*/node_modules/
 
 # IDE
 .idea/

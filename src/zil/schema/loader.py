@@ -478,6 +478,50 @@ def _check_tools(project_dir: Path, manifest: dict, result: ValidationResult) ->
                     )
                 )
 
+            # Validate source and entry_point paths
+            source = server.get("source")
+            entry_point = server.get("entry_point")
+            if source:
+                source_path = (project_dir / source).resolve()
+                if not source_path.is_dir():
+                    result.checks.append(
+                        CheckResult(
+                            "fail",
+                            f"spec.tools.mcp_servers[{name}] — source '{source}' "
+                            "directory not found",
+                        )
+                    )
+                elif entry_point:
+                    ep_path = source_path / entry_point
+                    if not ep_path.is_file():
+                        result.checks.append(
+                            CheckResult(
+                                "warn",
+                                f"spec.tools.mcp_servers[{name}] — entry_point "
+                                f"'{entry_point}' not found in source "
+                                "(may need to build first)",
+                            )
+                        )
+                # Warn if source is outside tools/ convention
+                try:
+                    source_path.relative_to((project_dir / "tools").resolve())
+                except ValueError:
+                    result.checks.append(
+                        CheckResult(
+                            "warn",
+                            f"spec.tools.mcp_servers[{name}] — source '{source}' "
+                            "is outside tools/ directory (convention: tools/{name}/)",
+                        )
+                    )
+            if entry_point and not source:
+                result.checks.append(
+                    CheckResult(
+                        "warn",
+                        f"spec.tools.mcp_servers[{name}] — entry_point without "
+                        "source has no effect",
+                    )
+                )
+
             # Cross-reference ${VAR} in args and env
             for arg in server.get("args", []):
                 _check_env_refs(arg, name, "args", declared_env_names, result)

@@ -458,3 +458,204 @@ class TestInitMcp:
             )
             dockerfile = (Path("plain-agent") / "Dockerfile").read_text()
             assert "apt-get install" not in dockerfile
+
+
+# ---------------------------------------------------------------------------
+# entry_point schema
+# ---------------------------------------------------------------------------
+
+class TestEntryPointSchema:
+    """Tests for entry_point field in mcpServer schema."""
+
+    def test_schema_accepts_entry_point(self):
+        """entry_point is valid in the schema."""
+        schema = load_schema()
+        manifest = _base_manifest(tools={
+            "mcp_servers": [{
+                "name": "myserver",
+                "transport": "stdio",
+                "command": "node",
+                "args": ["./tools/myserver/dist/index.js"],
+                "source": "./tools/myserver",
+                "entry_point": "dist/index.js",
+            }],
+        })
+        jsonschema.validate(instance=manifest, schema=schema)
+
+    def test_schema_accepts_source_without_entry_point(self):
+        """source alone is valid (entry_point is optional)."""
+        schema = load_schema()
+        manifest = _base_manifest(tools={
+            "mcp_servers": [{
+                "name": "myserver",
+                "transport": "stdio",
+                "command": "node",
+                "args": ["./tools/myserver/dist/index.js"],
+                "source": "./tools/myserver",
+            }],
+        })
+        jsonschema.validate(instance=manifest, schema=schema)
+
+
+# ---------------------------------------------------------------------------
+# .bundleignore
+# ---------------------------------------------------------------------------
+
+class TestBundleignore:
+    """Tests for _load_bundle_excludes and _is_excluded."""
+
+    def test_default_excludes(self):
+        from zil.packaging.archive import _load_bundle_excludes
+        excludes = _load_bundle_excludes(Path("/nonexistent"))
+        assert ".git" in excludes
+        assert "src" in excludes
+        assert "tests" in excludes
+        assert ".env" in excludes
+
+    def test_bundleignore_extends_defaults(self, tmp_path):
+        from zil.packaging.archive import _load_bundle_excludes
+        (tmp_path / ".bundleignore").write_text("custom_dir\nmy_cache\n")
+        excludes = _load_bundle_excludes(tmp_path)
+        assert ".git" in excludes  # default
+        assert "custom_dir" in excludes  # extra
+        assert "my_cache" in excludes  # extra
+
+    def test_bundleignore_ignores_comments(self, tmp_path):
+        from zil.packaging.archive import _load_bundle_excludes
+        (tmp_path / ".bundleignore").write_text("# comment\nfoo\n\n")
+        excludes = _load_bundle_excludes(tmp_path)
+        assert "# comment" not in excludes
+        assert "foo" in excludes
+
+    def test_is_excluded(self):
+        from zil.packaging.archive import _is_excluded
+        excludes = {".git", "src"}
+        assert _is_excluded(Path(".git/config"), excludes) is True
+        assert _is_excluded(Path("src/main.ts"), excludes) is True
+        assert _is_excluded(Path("dist/index.js"), excludes) is False
+        assert _is_excluded(Path("package.json"), excludes) is False
+
+
+# ---------------------------------------------------------------------------
+# Dockerfile generator
+# ---------------------------------------------------------------------------
+
+class TestDockerfileGenerator:
+    """Tests for packaging/dockerfile.py."""
+
+    def test_generate_dockerfile_no_deps(self):
+        from zil.packaging.dockerfile import generate_dockerfile
+        result = generate_dockerfile(name="myagent")
+        assert "FROM python:3.12-slim AS deps" in result
+        assert "apt-get" not in result
+        assert "EXPOSE 8000" in result
+
+    def test_generate_dockerfile_with_nodejs(self):
+        from zil.packaging.dockerfile import generate_dockerfile
+        result = generate_dockerfile(name="myagent", host_deps=["nodejs"])
+        assert "apt-get" in result
+        assert "nodejs npm" in result
+
+    def test_generate_deploy_dockerfile(self):
+        from zil.packaging.dockerfile import generate_deploy_dockerfile
+        result = generate_deploy_dockerfile(
+            module_dir="myagent",
+            adk_version="1.2.3",
+            host_deps=["nodejs"],
+            with_ui=True,
+            trace=True,
+        )
+        assert "google-adk==1.2.3" in result
+        assert "nodejs npm" in result
+        assert "adk web" in result
+        assert "--trace_to_cloud" in result
+
+    def test_generate_deploy_dockerfile_api_server(self):
+        from zil.packaging.dockerfile import generate_deploy_dockerfile
+        result = generate_deploy_dockerfile(module_dir="myagent")
+        assert "adk api_server" in result
+        assert "--trace_to_cloud" not in result
+
+
+# ---------------------------------------------------------------------------
+# Validation: source and entry_point paths
+# ---------------------------------------------------------------------------
+
+class TestSourceEntryPointValidation:
+    """Tests for source/entry_point validation in _check_tools."""
+
+    def test_validate_warns_source_outside_tools(self, tmp_path):
+        """Warn when source is not under tools/ convention."""
+        # Setup: source exists but outside tools/
+        ext_source = tmp_path / "external_server"
+        ext_source.mkdir()
+        (ext_source / "dist").mkdir()
+        (ext_source / "dist" / "index.js").write_text("//")
+
+        (tmp_path / "identity").mkdir()
+        (tmp_path / "identity" / "persona.md").write_text("x")
+        (tmp_path / "adapters").mkdir()
+        (tmp_path / "adapters" / "llm.yaml").write_text("provider: gemini\nmodel: gemini-2.0-flash")
+
+        manifest = _base_manifest(tools={
+            "mcp_servers": [{
+                "name": "ext",
+                "transport": "stdio",
+                "command": "node",
+                "args": ["./external_server/dist/index.js"],
+                "source": "./external_server",
+                "entry_point": "dist/index.js",
+                "tool_filter": ["foo"],
+            }],
+            "host_dependencies": ["nodejs"],
+        })
+        (tmp_path / "manifest.yaml").write_text(yaml.dump(manifest))
+        result = validate_project(tmp_path)
+        msgs = [c.message for c in result.checks]
+        assert any("outside tools/" in m for m in msgs)
+
+    def test_validate_fails_source_not_found(self, tmp_path):
+        """Fail when source directory doesn't exist."""
+        (tmp_path / "identity").mkdir()
+        (tmp_path / "identity" / "persona.md").write_text("x")
+        (tmp_path / "adapters").mkdir()
+        (tmp_path / "adapters" / "llm.yaml").write_text("provider: gemini\nmodel: gemini-2.0-flash")
+
+        manifest = _base_manifest(tools={
+            "mcp_servers": [{
+                "name": "missing",
+                "transport": "stdio",
+                "command": "node",
+                "args": ["./tools/missing/dist/index.js"],
+                "source": "./tools/missing",
+                "tool_filter": ["foo"],
+            }],
+            "host_dependencies": ["nodejs"],
+        })
+        (tmp_path / "manifest.yaml").write_text(yaml.dump(manifest))
+        result = validate_project(tmp_path)
+        msgs = [c.message for c in result.checks]
+        assert any("directory not found" in m for m in msgs)
+
+    def test_validate_warns_entry_point_without_source(self, tmp_path):
+        """Warn when entry_point is specified without source."""
+        (tmp_path / "identity").mkdir()
+        (tmp_path / "identity" / "persona.md").write_text("x")
+        (tmp_path / "adapters").mkdir()
+        (tmp_path / "adapters" / "llm.yaml").write_text("provider: gemini\nmodel: gemini-2.0-flash")
+
+        manifest = _base_manifest(tools={
+            "mcp_servers": [{
+                "name": "orphan",
+                "transport": "stdio",
+                "command": "node",
+                "args": ["./dist/index.js"],
+                "entry_point": "dist/index.js",
+                "tool_filter": ["foo"],
+            }],
+            "host_dependencies": ["nodejs"],
+        })
+        (tmp_path / "manifest.yaml").write_text(yaml.dump(manifest))
+        result = validate_project(tmp_path)
+        msgs = [c.message for c in result.checks]
+        assert any("entry_point without source" in m for m in msgs)

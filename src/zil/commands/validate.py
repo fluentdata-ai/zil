@@ -60,6 +60,9 @@ def _print_text(result: ValidationResult) -> None:
         w = result.warning_count
         summary = f"All checks passed ({w} warning{'s' if w != 1 else ''})"
         console.print(f"[green]{summary}[/green]")
+    elif result.error_count == 0:
+        w = result.warning_count
+        console.print(f"[yellow]Validation passed with {w} warning{'s' if w != 1 else ''}[/yellow]")
     else:
         console.print(f"[red]Validation failed: {result.error_count} error(s)[/red]")
 

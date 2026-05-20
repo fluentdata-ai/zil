@@ -7,12 +7,19 @@ from pathlib import Path
 import yaml
 
 
-def push_archive(archive_path: Path, registry: str) -> str:
+def push_archive(
+    archive_path: Path,
+    registry: str,
+    username: str | None = None,
+    password: str | None = None,
+) -> str:
     """Push a .zil archive to an OCI registry.
 
     Args:
         archive_path: Path to the .zil file.
         registry: Registry URL (e.g. us-docker.pkg.dev/my-project/agents).
+        username: Optional registry username.
+        password: Optional registry password or token.
 
     Returns:
         The full reference string (registry/name:version).
@@ -46,6 +53,10 @@ def push_archive(archive_path: Path, registry: str) -> str:
 
     # Push using oras
     client = oras.client.OrasClient()
+    if username and password:
+        # Extract hostname for login (e.g. us-central1-docker.pkg.dev)
+        hostname = registry.split("/")[0]
+        client.login(username=username, password=password, hostname=hostname)
     client.push(
         target=target,
         files=[str(archive_path)],

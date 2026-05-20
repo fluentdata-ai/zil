@@ -206,6 +206,77 @@ def _parse_env_file(env_file: Path) -> dict[str, str]:
     return values
 
 
+def _deploy_with_mcp_deps(
+    module_path: Path,
+    project: str,
+    region: str,
+    service_name: str,
+    trace: bool,
+    with_ui: bool,
+    env_vars: dict[str, str] | None,
+    allow_unauthenticated: bool,
+    host_deps: list[str],
+    module_dir: str,
+) -> int:
+    """Deploy with a custom Dockerfile that installs host dependencies."""
+    import tempfile
+
+    import importlib.metadata
+
+    from zil.packaging.dockerfile import generate_deploy_dockerfile
+
+    try:
+        adk_version = importlib.metadata.version("google-adk")
+    except importlib.metadata.PackageNotFoundError:
+        adk_version = "1.0.0"
+
+    dockerfile = generate_deploy_dockerfile(
+        module_dir=module_dir,
+        adk_version=adk_version,
+        host_deps=host_deps,
+        with_ui=with_ui,
+        trace=trace,
+    )
+
+    # Stage everything in a temp folder
+    temp_dir = tempfile.mkdtemp(prefix="zil_deploy_mcp_")
+    temp_path = Path(temp_dir)
+
+    # Write Dockerfile
+    (temp_path / "Dockerfile").write_text(dockerfile)
+
+    # Copy the module dir as agents/{module_dir}/
+    agents_dir = temp_path / "agents" / module_dir
+    shutil.copytree(module_path, agents_dir)
+
+    console.print(
+        f"→ Deploying [bold]{service_name}[/bold] to Cloud Run "
+        f"(project={project}, region={region}, with MCP host deps)..."
+    )
+
+    # Deploy via gcloud
+    cmd = [
+        "gcloud", "run", "deploy", service_name,
+        "--source", temp_dir,
+        f"--project={project}",
+        f"--region={region}",
+        "--port=8000",
+        "--memory=1Gi",
+        "--timeout=300",
+    ]
+    if env_vars:
+        env_pairs = ",".join(f"{k}={v}" for k, v in env_vars.items())
+        cmd.append(f"--set-env-vars={env_pairs}")
+    if allow_unauthenticated:
+        cmd.append("--allow-unauthenticated")
+
+    result = subprocess.call(cmd)
+
+    # Cleanup
+    shutil.rmtree(temp_dir, ignore_errors=True)
+    return result
+
+
 def _deploy_cloud_run(
     project_dir: Path,
     agent_name: str,
@@ -238,6 +309,7 @@ def _deploy_cloud_run(
         ("identity", None),
         ("adapters", None),
         ("observability", None),
+        ("tools", None),
     ]
     for name, _ in _copy_targets:
         src = project_dir / name
@@ -249,40 +321,62 @@ def _deploy_cloud_run(
                 shutil.copytree(src, dst)
             _copied_artifacts.append(dst)
 
-    cmd = [
-        "adk", "deploy", "cloud_run",
-        f"--project={project}",
-        f"--region={region}",
-        f"--service_name={service_name}",
-    ]
+    # Detect if MCP host dependencies need custom Dockerfile
+    manifest_path = project_dir / "manifest.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text())
+    tools_cfg = manifest.get("spec", {}).get("tools")
+    host_deps: list[str] = []
+    has_mcp_source = False
+    if isinstance(tools_cfg, dict):
+        host_deps = tools_cfg.get("host_dependencies", [])
+        for srv in tools_cfg.get("mcp_servers", []):
+            if srv.get("source"):
+                has_mcp_source = True
 
-    if trace:
-        cmd.append("--otel_to_cloud")
+    if host_deps or has_mcp_source:
+        # Use custom deploy path that injects host deps into Dockerfile
+        result = _deploy_with_mcp_deps(
+            module_path, project, region, service_name,
+            trace, with_ui, env_vars, allow_unauthenticated,
+            host_deps, module_dir,
+        )
+    else:
+        cmd = [
+            "adk", "deploy", "cloud_run",
+            f"--project={project}",
+            f"--region={region}",
+            f"--service_name={service_name}",
+        ]
 
-    if with_ui:
-        cmd.append("--with_ui")
+        if trace:
+            cmd.append("--otel_to_cloud")
 
-    # The agent path is the module directory
-    cmd.append(str(module_path))
+        if with_ui:
+            cmd.append("--with_ui")
 
-    # Inject extra gcloud flags via -- separator
-    gcloud_args: list[str] = []
-    if env_vars:
-        env_pairs = ",".join(f"{k}={v}" for k, v in env_vars.items())
-        gcloud_args.append(f"--set-env-vars={env_pairs}")
-    if allow_unauthenticated:
-        gcloud_args.append("--allow-unauthenticated")
-    if gcloud_args:
-        cmd.append("--")
-        cmd.extend(gcloud_args)
+        # The agent path is the module directory
+        cmd.append(str(module_path))
 
-    console.print(
-        f"→ Deploying [bold]{agent_name}[/bold] to Cloud Run "
-        f"(project={project}, region={region})..."
-    )
+        # Inject extra gcloud flags via -- separator
+        gcloud_args: list[str] = []
+        if env_vars:
+            env_pairs = ",".join(f"{k}={v}" for k, v in env_vars.items())
+            gcloud_args.append(f"--set-env-vars={env_pairs}")
+        if allow_unauthenticated:
+            gcloud_args.append("--allow-unauthenticated")
+        if gcloud_args:
+            cmd.append("--")
+            cmd.extend(gcloud_args)
+
+        console.print(
+            f"→ Deploying [bold]{agent_name}[/bold] to Cloud Run "
+            f"(project={project}, region={region})..."
+        )
+
+        result = subprocess.call(cmd)
 
     try:
-        result = subprocess.call(cmd)
+        pass
     finally:
         # Clean up copied artifacts to avoid polluting the source tree
         for artifact in _copied_artifacts:
