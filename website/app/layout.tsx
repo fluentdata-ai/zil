@@ -6,15 +6,15 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://getzil.dev"),
   title: "Zil — A framework for production AI agents",
   description:
-    "Zil is the open methodology for building, packaging, and operating production AI agents. Seven pillars covering governance, security, data, observability, evaluation, cost, and architecture. By FluentData.",
+    "Zil is an open-source CLI and Python SDK for validating, packaging, and deploying production AI agents. Composes with ADK, MCP, DeepEval, and OpenTelemetry. By FluentData.",
   keywords: [
     "AI agents",
     "agentic AI",
     "agent framework",
-    "agent methodology",
+    "agent CLI",
     "AgentOps",
     "MCP",
-    "A2A",
+    "ADK",
     "FluentData",
     "Zil",
     "production AI",
@@ -24,7 +24,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Zil — A framework for production AI agents",
     description:
-      "An open methodology for building, packaging, and operating production AI agents at enterprise scale.",
+      "An open-source CLI and SDK for validating, packaging, and deploying production AI agents.",
     url: "https://getzil.dev",
     siteName: "Zil",
     type: "website",
@@ -34,7 +34,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Zil — A framework for production AI agents",
     description:
-      "An open methodology for building, packaging, and operating production AI agents at enterprise scale.",
+      "An open-source CLI and SDK for validating, packaging, and deploying production AI agents.",
     images: ["/opengraph-image"],
   },
   robots: { index: true, follow: true },

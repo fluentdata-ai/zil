@@ -78,7 +78,7 @@ export default async function Image() {
           A framework for production AI agents
         </div>
 
-        {/* Pillars line */}
+        {/* CLI commands line */}
         <div
           style={{
             display: "flex",
@@ -87,16 +87,16 @@ export default async function Image() {
           }}
         >
           {[
-            "Governance",
-            "Security",
-            "Data",
-            "Observability",
-            "Evaluation",
-            "Cost",
-            "Architecture",
-          ].map((pillar) => (
+            "init",
+            "validate",
+            "audit",
+            "eval",
+            "pack",
+            "push",
+            "deploy",
+          ].map((cmd) => (
             <div
-              key={pillar}
+              key={cmd}
               style={{
                 fontSize: "13px",
                 fontWeight: 500,
@@ -105,7 +105,7 @@ export default async function Image() {
                 textTransform: "uppercase" as const,
               }}
             >
-              {pillar}
+              {cmd}
             </div>
           ))}
         </div>

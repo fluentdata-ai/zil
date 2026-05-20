@@ -264,53 +264,6 @@
   max-width: none;
 }
 
-/* ============ PRINCIPLES ============ */
-.principlesHeader {
-  max-width: 800px;
-  margin-bottom: 80px;
-}
-
-.principlesHeader .eyebrow {
-  display: inline-block;
-  margin-bottom: 24px;
-}
-
-.principleGrid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 1px;
-  background: var(--line);
-  border: 1px solid var(--line);
-}
-
-.principle {
-  background: var(--bg);
-  padding: 56px 48px;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  position: relative;
-  transition: background 0.3s var(--ease-out);
-}
-
-.principle:hover {
-  background: var(--bg-elevated);
-}
-
-.principleWord {
-  font-size: clamp(36px, 4.5vw, 56px);
-  color: var(--accent);
-  font-weight: 300;
-  letter-spacing: -0.025em;
-  line-height: 1;
-}
-
-.principle p {
-  color: var(--silver-300);
-  font-size: 16px;
-  line-height: 1.7;
-}
-
 /* ============ CODE / PACKAGE FORMAT ============ */
 .codeSection {
   background: var(--bg-elevated);
@@ -562,13 +515,6 @@
   }
   .pillarNum {
     font-size: 28px;
-  }
-
-  .principleGrid {
-    grid-template-columns: 1fr;
-  }
-  .principle {
-    padding: 36px 28px;
   }
 
   .codeStats {

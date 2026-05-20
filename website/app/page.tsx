@@ -1,62 +1,42 @@
 import Link from "next/link";
 import Image from "next/image";
 import styles from "./page.module.css";
-import NotifyDialog from "./components/NotifyDialog";
 
-const pillars = [
+const steps = [
   {
     num: "01",
-    name: "Governance & Lifecycle",
-    body: "Who owns each agent, how it changes, when it retires, and how humans stay in the loop. Every agent has a registry entry, a named owner, an approval workflow, and a defined oversight UX.",
+    name: "zil init",
+    body: "Scaffold a complete agent project — manifest, identity, adapters, evals, guardrails, Dockerfile, CI pipeline. Choose your LLM provider and MCP preset.",
   },
   {
     num: "02",
-    name: "Security & Adversarial Hardness",
-    body: "Prompt injection, tool-use abuse, memory poisoning, A2A spoofing, and supply chain risk. A repeatable threat model and red-team playbook for the agent attack surface.",
+    name: "zil validate",
+    body: "Check manifest schema, file references, env var declarations, MCP server config, and guardrail structure. Catch misconfigurations before they reach production.",
   },
   {
     num: "03",
-    name: "Data & Memory Protection",
-    body: "Memory is data. Data has laws. Right-to-forget cascades, residency mapping, semantic context as systems of action — the agent-scale data layer treated as infrastructure, not afterthought.",
+    name: "zil audit",
+    body: "Security scan: prompt injection resilience, PII leakage, indirect injection surface, guardrail coverage scoring. Actionable findings, not compliance theater.",
   },
   {
     num: "04",
-    name: "Observability & Reliability",
-    body: "OpenTelemetry agent spans, reasoning traces, drift detection, crash recovery, idempotency. Long-running agents treated as a distinct architectural pattern with its own engineering practices.",
+    name: "zil eval",
+    body: "Run evaluation suites with LLM-as-judge metrics — answer relevancy, faithfulness, contextual recall. Gate promotions on quality thresholds.",
   },
   {
     num: "05",
-    name: "Evaluation & Quality",
-    body: "Pre-deployment suites, multi-turn evaluation, tool-use correctness, planning quality, eval-in-production. Every promotion gated. Every production signal becomes a future test case.",
+    name: "zil pack",
+    body: "Build a signed .zil archive: manifest, agent code, MCP tools, SBOM, eval results — one portable artifact. Cosign signature and SLSA provenance included.",
   },
   {
     num: "06",
-    name: "Cost & Resource Governance",
-    body: "Token budgets at multiple granularities, model routing by task complexity, multi-provider fallback. The unit economics that determine whether agent programs survive scale.",
+    name: "zil push",
+    body: "Push the archive to any OCI-compatible registry — Google Artifact Registry, GHCR, ECR, Docker Hub. Same tooling you already use for containers.",
   },
   {
     num: "07",
-    name: "Architecture & Packaging",
-    body: "Agents as portable, signed, versioned artifacts. Multi-agent orchestration as a first-class concern. The .zil package format separates what ships from how it runs.",
-  },
-];
-
-const principles = [
-  {
-    word: "Open",
-    body: "Composes with MCP, A2A, and emerging open standards from the Linux Foundation Agentic AI Foundation. Zil is the layer above — packaging, runtime, lifecycle.",
-  },
-  {
-    word: "Portable",
-    body: "Adapter pattern for every external dependency. Switch LLM providers, vector backends, or vendors with a configuration change. No code rewrite.",
-  },
-  {
-    word: "Compliance-grade",
-    body: "Designed for regulated industries from day one. Audit trails, data residency, right-to-forget cascades, signed artifacts, SLSA provenance — the discipline regulators expect.",
-  },
-  {
-    word: "Practitioner-led",
-    body: "Refined through real engagements. Every primitive in the framework solves a specific failure mode that practitioners have actually hit in production.",
+    name: "zil deploy",
+    body: "Deploy to Cloud Run from source or from a registry artifact. MCP server host dependencies, env vars, and tracing — handled automatically.",
   },
 ];
 
@@ -100,7 +80,7 @@ export default function Home() {
         <div className={styles.heroGrid}>
           <span className={`eyebrow rise rise-delay-1 ${styles.heroEyebrow}`}>
             <span className={styles.dotMarker} />
-            BY FLUENTDATA · v0.1
+            OPEN SOURCE · APACHE 2.0
           </span>
 
           <h1 className={`rise rise-delay-2 ${styles.heroTitle}`}>
@@ -112,17 +92,17 @@ export default function Home() {
           </h1>
 
           <p className={`lead rise rise-delay-3 ${styles.heroLead}`}>
-            <span className={styles.zilWord}>Zil</span> is an open methodology for
-            building, packaging, and operating AI agents at enterprise scale.
-            Seven pillars, one signed artifact, deployable anywhere.
+            <span className={styles.zilWord}>Zil</span> is an open-source CLI and
+            Python SDK for validating, packaging, and deploying AI agents.
+            Open source. Composable. Deploys anywhere.
           </p>
 
           <div className={`rise rise-delay-4 ${styles.heroCtas}`}>
-            <Link href="/docs" className="btn btn-primary">
-              Documentation <span className="btn-arrow">→</span>
+            <Link href="/docs/getting-started" className="btn btn-primary">
+              Get Started <span className="btn-arrow">→</span>
             </Link>
-            <Link href="#read" className="btn">
-              Read the framework
+            <Link href="/docs" className="btn">
+              Documentation
             </Link>
             <a
               href="https://join.slack.com/t/zilorg/shared_invite/zt-3xye83sw1-cU3H1Hb_yFbmyBBgbt5VGQ"
@@ -132,7 +112,6 @@ export default function Home() {
             >
               Join Slack <span className="btn-arrow">→</span>
             </a>
-            <NotifyDialog />
           </div>
 
           <div className={`rise rise-delay-5 ${styles.heroMeta}`}>
@@ -144,7 +123,7 @@ export default function Home() {
             </div>
             <div className={styles.metaItem}>
               <span className="eyebrow-muted">Composes with</span>
-              <span className={styles.metaValue}>MCP · A2A · DeepEval · OpenTelemetry</span>
+              <span className={styles.metaValue}>ADK · MCP · DeepEval · OpenTelemetry</span>
             </div>
             <div className={styles.metaItem}>
               <span className="eyebrow-muted">Status</span>
@@ -161,42 +140,29 @@ export default function Home() {
 
       <div className="divider" />
 
-      {/* ============ THE PROBLEM ============ */}
-      <section id="approach">
+      {/* ============ WHY ZIL ============ */}
+      <section id="why">
         <div className="container">
           <div className={styles.twoCol}>
             <div className={styles.colLeft}>
-              <span className="eyebrow">01 — The problem</span>
+              <span className="eyebrow">01 — Why Zil</span>
               <h2 className={styles.sectionTitle}>
-                Production AI agents have <em className="italic-display">outgrown</em> the practices we use to ship them.
+                There is no standard way to <em className="italic-display">ship</em> an AI agent.
               </h2>
             </div>
             <div className={styles.colRight}>
               <p className="lead">
-                A short-turn chatbot fails in predictable ways. A multi-step
-                agent that reasons, uses tools, maintains memory, and hands off
-                to other agents fails in ways that compound — a bad reasoning
-                step leads to a wrong tool call, which writes incorrect data,
-                which poisons the agent's memory for the next session.
+                Most agent projects jump from notebook to production with no
+                manifest, no eval gate, no signed artifact, and no security
+                audit. The agent works in a demo — then breaks in ways that
+                compound once real users, real data, and real tools are involved.
               </p>
               <p>
-                Traditional production-readiness checklists were built for the
-                first generation of AI features. They do not cover what
-                production agents actually need: lifecycle governance, agent-specific
-                security, memory as a system of action, long-running execution,
-                multi-agent coordination, and packaging that survives the next
-                vendor migration.
-              </p>
-              <p>
-                <span className={styles.statLine}>
-                  <strong className={styles.stat}>46%</strong> of organizations cite integration with existing systems as their primary deployment challenge.
-                </span>
-                <span className={styles.statLine}>
-                  <strong className={styles.stat}>67%</strong> aim to avoid high dependency on a single AI provider.
-                </span>
-                <span className={styles.statLine}>
-                  <strong className={styles.stat}>35%</strong> admit they could not immediately disable a rogue AI agent.
-                </span>
+                Zil fills this gap. A declarative manifest (<code>manifest.yaml</code>)
+                defines your agent&apos;s identity, adapters, tools, evals, and
+                environment. A CLI validates, audits, evaluates, packages, and
+                deploys — so every agent ships as a signed, portable{" "}
+                <code>.zil</code> archive through a repeatable pipeline.
               </p>
             </div>
           </div>
@@ -205,59 +171,34 @@ export default function Home() {
 
       <div className="divider" />
 
-      {/* ============ SEVEN PILLARS ============ */}
+      {/* ============ CLI WORKFLOW ============ */}
       <section className={styles.pillars}>
         <div className="container">
           <div className={styles.pillarsHeader}>
-            <span className="eyebrow">02 — The framework</span>
+            <span className="eyebrow">02 — The CLI</span>
             <h2 className={styles.sectionTitle}>
-              Seven pillars. <em className="italic-display">One discipline.</em>
+              One CLI. Seven commands.{" "}
+              <em className="italic-display">Init to deployed.</em>
             </h2>
             <p className="lead">
-              Each pillar is independently assessable, independently actionable,
-              and designed to integrate with existing security, governance, and
-              engineering practices. Together they describe what a mature agent
-              operation looks like and how to get there.
+              Each command does one thing well. Together they form a complete
+              pipeline from project scaffolding to production deployment.
             </p>
           </div>
 
           <ol className={styles.pillarList}>
-            {pillars.map((p) => (
-              <li key={p.num} className={styles.pillarItem}>
-                <div className={styles.pillarNum}>{p.num}</div>
+            {steps.map((s) => (
+              <li key={s.num} className={styles.pillarItem}>
+                <div className={styles.pillarNum}>{s.num}</div>
                 <div className={styles.pillarBody}>
-                  <h3 className={styles.pillarName}>{p.name}</h3>
-                  <p className={styles.pillarText}>{p.body}</p>
+                  <h3 className={styles.pillarName}>
+                    <code>{s.name}</code>
+                  </h3>
+                  <p className={styles.pillarText}>{s.body}</p>
                 </div>
               </li>
             ))}
           </ol>
-        </div>
-      </section>
-
-      <div className="divider" />
-
-      {/* ============ PRINCIPLES ============ */}
-      <section id="read">
-        <div className="container">
-          <div className={styles.principlesHeader}>
-            <span className="eyebrow">03 — Principles</span>
-            <h2 className={styles.sectionTitle}>
-              What makes <span className="mark">.zil</span>{" "}
-              <em className="italic-display">different.</em>
-            </h2>
-          </div>
-
-          <div className={styles.principleGrid}>
-            {principles.map((p) => (
-              <div key={p.word} className={styles.principle}>
-                <h3 className={styles.principleWord}>
-                  <em className="italic-display">{p.word}</em>
-                </h3>
-                <p>{p.body}</p>
-              </div>
-            ))}
-          </div>
         </div>
       </section>
 
@@ -268,16 +209,15 @@ export default function Home() {
         <div className="container">
           <div className={styles.codeWrapper}>
             <div className={styles.codeIntro}>
-              <span className="eyebrow">04 — The artifact</span>
+              <span className="eyebrow">03 — The artifact</span>
               <h2 className={styles.sectionTitle}>
                 <span className="mark">.zil</span> — a signed, portable agent bundle.
               </h2>
               <p className="lead">
-                Every Zil-conformant agent ships as a single signed archive
-                containing its full declarative specification. Manifest,
-                identity, skills, memory configuration, RAG snapshots, and
-                evaluation suite — packaged together, versioned together,
-                deployed anywhere.
+                Every agent ships as a single signed archive containing its
+                manifest, identity, adapters, MCP tools, evaluation results,
+                and SBOM — packaged together, versioned together, deployed
+                anywhere.
               </p>
               <div className={styles.codeStats}>
                 <div className={styles.codeStat}>
@@ -294,7 +234,7 @@ export default function Home() {
                 </div>
                 <div className={styles.codeStat}>
                   <span className="eyebrow-muted">Deployable to</span>
-                  <span className={styles.codeStatValue}>Any conformant runtime</span>
+                  <span className={styles.codeStatValue}>Cloud Run + more</span>
                 </div>
               </div>
             </div>
@@ -302,7 +242,7 @@ export default function Home() {
             <pre className={styles.code}>
               <code>
                 <span className={styles.codeComment}>
-                  # customer-support-agent-2.1.4.zil
+                  # my-agent-1.0.0.zil
                 </span>
                 {"\n"}
                 <span className={styles.codeKey}>apiVersion:</span>{" "}
@@ -314,46 +254,55 @@ export default function Home() {
                 <span className={styles.codeKey}>metadata:</span>
                 {"\n  "}
                 <span className={styles.codeKey}>name:</span>{" "}
-                <span className={styles.codeValue}>customer-support-agent</span>
+                <span className={styles.codeValue}>my-agent</span>
                 {"\n  "}
                 <span className={styles.codeKey}>version:</span>{" "}
-                <span className={styles.codeValue}>2.1.4</span>
+                <span className={styles.codeValue}>1.0.0</span>
                 {"\n"}
                 {"\n"}
                 <span className={styles.codeKey}>spec:</span>
                 {"\n  "}
+                <span className={styles.codeKey}>runtime:</span>
+                {"\n    "}
+                <span className={styles.codeKey}>framework:</span>{" "}
+                <span className={styles.codeValue}>adk</span>
+                {"\n    "}
+                <span className={styles.codeKey}>language:</span>{" "}
+                <span className={styles.codeValue}>python</span>
+                {"\n    "}
+                <span className={styles.codeKey}>llm:</span>
+                {"\n      "}
+                <span className={styles.codeKey}>adapter:</span>{" "}
+                <span className={styles.codeRef}>./adapters/llm.yaml</span>
+                {"\n  "}
                 <span className={styles.codeKey}>identity:</span>{" "}
-                <span className={styles.codeRef}>./identity/persona.md</span>
-                {"\n  "}
-                <span className={styles.codeKey}>adapters:</span>{" "}
-                <span className={styles.codeRef}>./adapters/</span>
-                {"\n  "}
-                <span className={styles.codeKey}>skills:</span>{" "}
-                <span className={styles.codeRef}>./skills/</span>
-                {"\n  "}
-                <span className={styles.codeKey}>memory:</span>{" "}
-                <span className={styles.codeRef}>./memory/backend.yaml</span>
-                {"\n  "}
-                <span className={styles.codeKey}>mcp_servers:</span>{" "}
-                <span className={styles.codeRef}>./mcp/</span>
-                {"\n  "}
-                <span className={styles.codeKey}>data:</span>{" "}
-                <span className={styles.codeRef}>./data/kb_snapshot.tar.gz</span>
+                <span className={styles.codeRef}>./identity</span>
                 {"\n  "}
                 <span className={styles.codeKey}>evals:</span>{" "}
-                <span className={styles.codeRef}>./evals/baseline.yaml</span>
+                <span className={styles.codeRef}>./evals</span>
+                {"\n  "}
+                <span className={styles.codeKey}>tools:</span>{" "}
+                <span className={styles.codeRef}>./tools</span>
+                {"\n  "}
+                <span className={styles.codeKey}>observability:</span>{" "}
+                <span className={styles.codeRef}>./observability</span>
+                {"\n  "}
+                <span className={styles.codeKey}>env:</span>
+                {"\n    "}
+                <span className={styles.codeComment}>
+                  # declared, validated, injected at deploy
+                </span>
                 {"\n"}
                 {"\n"}
-                <span className={styles.codeComment}># attestations</span>
+                <span className={styles.codeComment}>
+                  # bundled attestations
+                </span>
                 {"\n"}
-                <span className={styles.codeKey}>signature:</span>{" "}
-                <span className={styles.codeAccent}>cosign</span>
+                <span className={styles.codeAccent}>SBOM.cyclonedx.json</span>
                 {"\n"}
-                <span className={styles.codeKey}>provenance:</span>{" "}
-                <span className={styles.codeAccent}>slsa-v1</span>
+                <span className={styles.codeAccent}>EVAL_RESULTS.json</span>
                 {"\n"}
-                <span className={styles.codeKey}>sbom:</span>{" "}
-                <span className={styles.codeAccent}>cyclonedx-1.5</span>
+                <span className={styles.codeAccent}>BUILD_META.json</span>
               </code>
             </pre>
           </div>
@@ -365,23 +314,14 @@ export default function Home() {
       {/* ============ FROM FLUENTDATA ============ */}
       <section className={styles.aboutSection}>
         <div className="container-narrow">
-          <span className="eyebrow">05 — Provenance</span>
+          <span className="eyebrow">04 — Provenance</span>
           <h2 className={styles.sectionTitle}>
-            From the team at <em className="italic-display">FluentData</em>.
+            Built by <em className="italic-display">FluentData</em>.
           </h2>
           <p className="lead">
-            Zil is the methodology FluentData uses to deploy production AI
-            agents for our clients. We are publishing it openly because we
-            believe production agent operations need a shared vocabulary, and
-            because no single vendor's platform should be the default answer
-            for an industry-wide question.
-          </p>
-          <p>
-            FluentData is a forward-deployed engineering firm working with
-            channel partners and direct clients on agentic AI delivery. Zil is
-            the connective tissue across our engagements — refined through real
-            production work, published as a signal of how we think about the
-            problem.
+            Zil is built and maintained by FluentData. Born from real
+            production agent work, open-sourced under Apache 2.0. We build
+            production AI agents for clients — Zil is the toolchain we use.
           </p>
 
           <div className={styles.aboutCtas}>
@@ -399,7 +339,6 @@ export default function Home() {
             >
               Get in touch <span className="btn-arrow">→</span>
             </a>
-            <NotifyDialog />
           </div>
         </div>
       </section>
@@ -430,19 +369,16 @@ export default function Home() {
             </div>
 
             <div className={styles.footerCol}>
-              <span className="eyebrow-muted">Framework</span>
+              <span className="eyebrow-muted">Product</span>
               <ul className={styles.footerList}>
                 <li>
                   <Link href="/docs">Documentation</Link>
                 </li>
                 <li>
-                  <Link href="#approach">The problem</Link>
+                  <Link href="/docs/cli">CLI Reference</Link>
                 </li>
                 <li>
-                  <Link href="#approach">Seven pillars</Link>
-                </li>
-                <li>
-                  <Link href="#read">Principles</Link>
+                  <Link href="/docs/getting-started">Get Started</Link>
                 </li>
                 <li>
                   <Link href="/agent.txt">agent.txt</Link>
@@ -455,20 +391,20 @@ export default function Home() {
               <ul className={styles.footerList}>
                 <li>
                   <a
+                    href="https://google.github.io/adk-docs/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Google ADK ↗
+                  </a>
+                </li>
+                <li>
+                  <a
                     href="https://modelcontextprotocol.io"
                     target="_blank"
                     rel="noopener noreferrer"
                   >
                     Model Context Protocol ↗
-                  </a>
-                </li>
-                <li>
-                  <a
-                    href="https://a2aproject.org"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Agent2Agent Protocol ↗
                   </a>
                 </li>
                 <li>
@@ -546,7 +482,7 @@ export default function Home() {
 
           <div className={styles.footerBottom}>
             <span className={styles.footerCopy}>
-              © 2026 FluentData. Zil is a draft methodology in active development.
+              © 2026 FluentData. Open source, Apache 2.0.
             </span>
             <span className={styles.footerVersion}>
               <span className="mark">getzil.dev</span> · v0.1
