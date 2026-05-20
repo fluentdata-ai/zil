@@ -9,7 +9,6 @@ Single source of truth used by:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import yaml
 
@@ -127,7 +126,8 @@ RUN pip install google-adk=={adk_version}
 COPY --chown=myuser:myuser "agents/{module_dir}/" "/app/agents/{module_dir}/"
 
 # Install agent deps
-COPY --chown=myuser:myuser "agents/{module_dir}/requirements.txt" "/app/agents/{module_dir}/requirements.txt"
+COPY --chown=myuser:myuser \
+  "agents/{module_dir}/requirements.txt" "/app/agents/{module_dir}/requirements.txt"
 RUN pip install --no-cache-dir -r "/app/agents/{module_dir}/requirements.txt" 2>/dev/null || true
 
 EXPOSE 8000

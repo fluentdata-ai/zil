@@ -1,0 +1,79 @@
+# Technologies
+
+Zil is built on open-source foundations. This page lists every notable technology Zil integrates with, organized by purpose.
+
+---
+
+## Agent Framework
+
+| Technology | Used for | Link |
+|-----------|----------|------|
+| **Google ADK** | Agent orchestration, LLM routing, tool execution, and the web UI. Zil's SDK returns ADK `LlmAgent` instances; the CLI wraps `adk run`, `adk web`, and `adk deploy`. | [google.github.io/adk-docs](https://google.github.io/adk-docs/) |
+
+## Tool Protocol
+
+| Technology | Used for | Link |
+|-----------|----------|------|
+| **MCP** (Model Context Protocol) | Standardized communication between agents and tool servers via stdio or SSE transports. Zil bundles MCP server sources, manages lifecycle, and wires them as ADK toolsets. | [modelcontextprotocol.io](https://modelcontextprotocol.io/) |
+
+## LLM Providers
+
+| Technology | Used for | Link |
+|-----------|----------|------|
+| **LiteLLM** | Multi-provider model string convention. Zil uses the `provider/model` prefix format (e.g. `anthropic/claude-sonnet-4-20250514`, `openai/gpt-4o`) so ADK can route to any supported LLM. | [docs.litellm.ai](https://docs.litellm.ai/) |
+
+## Evaluation
+
+| Technology | Used for | Link |
+|-----------|----------|------|
+| **DeepEval** | LLM-as-judge evaluation metrics (answer relevancy, faithfulness, contextual recall). Powers `zil eval run`, eval gating in `zil pack`, and pre-deploy checks. | [github.com/confident-ai/deepeval](https://github.com/confident-ai/deepeval) |
+
+## Observability
+
+| Technology | Used for | Link |
+|-----------|----------|------|
+| **OpenTelemetry** | Distributed tracing and span export. `zil run --trace` and `zil deploy --trace` export spans via OTLP. The SDK emits spans for guardrail checks, cost tracking, and MCP server calls. | [opentelemetry.io](https://opentelemetry.io/) |
+| **Grafana OTEL-LGTM** | Local dev observability stack. `zil web --docker --trace` starts a Grafana container with Tempo (traces), Mimir (metrics), and Loki (logs). | [github.com/grafana/docker-otel-lgtm](https://github.com/grafana/docker-otel-lgtm) |
+| **Google Cloud Trace** | Production trace backend. `zil deploy --trace` configures the Cloud Run container to export spans to Cloud Trace. | [cloud.google.com/trace](https://cloud.google.com/trace) |
+
+## Packaging & Supply Chain
+
+| Technology | Used for | Link |
+|-----------|----------|------|
+| **ORAS** | OCI artifact push/pull. `zil push` and `zil deploy --from` use ORAS to store and retrieve `.zil` archives in any OCI-compatible registry (Artifact Registry, GHCR, ECR, Docker Hub). | [oras.land](https://oras.land/) |
+| **CycloneDX** | SBOM (Software Bill of Materials) generation. `zil pack` produces a CycloneDX 1.5 JSON SBOM from `requirements.txt`, embedded in every `.zil` archive. | [cyclonedx.org](https://cyclonedx.org/) |
+| **Sigstore / cosign** | Archive signing and verification. `zil pack --sign` signs archives using cosign (keyless OIDC or key-based). `zil inspect --verify` verifies signatures. | [sigstore.dev](https://www.sigstore.dev/) |
+
+## Deployment & Infrastructure
+
+| Technology | Used for | Link |
+|-----------|----------|------|
+| **Docker** | Container builds for local testing (`zil web --docker`) and deployment (`zil deploy`). Zil generates Dockerfiles with host dependencies for MCP servers. | [docker.com](https://www.docker.com/) |
+| **Google Cloud Run** | Serverless container hosting. `zil deploy` builds and deploys agent containers to Cloud Run via `gcloud run deploy --source`. | [cloud.google.com/run](https://cloud.google.com/run) |
+| **Google Cloud Build** | Remote container image builds. Cloud Run deployments use Cloud Build to build Docker images from source. | [cloud.google.com/build](https://cloud.google.com/build) |
+| **Google Artifact Registry** | OCI registry for `.zil` archives and container images. Works with `zil push` for archive storage and Cloud Build for image storage. | [cloud.google.com/artifact-registry](https://cloud.google.com/artifact-registry) |
+
+## CLI & SDK Libraries
+
+| Technology | Used for | Link |
+|-----------|----------|------|
+| **Click** | Command-line interface framework. All `zil` commands are Click commands with options, arguments, and help text. | [click.palletsprojects.com](https://click.palletsprojects.com/) |
+| **Rich** | Terminal UI — styled output, tables, progress bars, panels, and the security audit report. | [rich.readthedocs.io](https://rich.readthedocs.io/) |
+| **Pydantic** | Data validation and settings management. Used for structured config parsing and ADK model compatibility. | [docs.pydantic.dev](https://docs.pydantic.dev/) |
+| **JSON Schema** | Manifest schema validation. The Zil v1 manifest schema is defined as a JSON Schema document; `zil validate` checks manifests against it. | [json-schema.org](https://json-schema.org/) |
+| **PyYAML** | YAML parsing for `manifest.yaml`, adapter configs, identity files, eval suites, and observability config. | [pyyaml.org](https://pyyaml.org/) |
+| **Jinja2** | Template rendering for `zil init` project scaffolding (Dockerfile, CI pipeline, README, etc.). | [jinja.palletsprojects.com](https://jinja.palletsprojects.com/) |
+
+## Build & Dev Tools
+
+| Technology | Used for | Link |
+|-----------|----------|------|
+| **Hatchling** | Python package build backend. Zil is packaged as `zil-ai` on PyPI via hatchling. | [hatch.pypa.io](https://hatch.pypa.io/) |
+| **Ruff** | Linting and formatting. The codebase uses Ruff for fast Python linting (E, F, I, N, W, UP rule sets). | [docs.astral.sh/ruff](https://docs.astral.sh/ruff/) |
+| **pytest** | Test framework. All Zil tests run via pytest with coverage reporting. | [docs.pytest.org](https://docs.pytest.org/) |
+
+---
+
+## Guiding principle
+
+> **Built on what exists.** Zil composes with established open-source projects. We do not reinvent agent orchestration, tool protocols, evaluation, or telemetry — we wire them together through a declarative manifest and a thin CLI.

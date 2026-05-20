@@ -7,7 +7,6 @@ dependencies, and missing env var declarations for MCP config references.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import yaml
 

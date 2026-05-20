@@ -70,8 +70,8 @@ def _load_bundle_excludes(source_dir: Path) -> set[str]:
 
 
 def _is_excluded(rel_path: Path, excludes: set[str]) -> bool:
-    """Check if a relative path matches any exclusion entry."""
-    return any(part in excludes for part in rel_path.parts)
+    """Check if a relative path starts with an excluded top-level entry."""
+    return rel_path.parts[0] in excludes if rel_path.parts else False
 
 
 def build_archive(
@@ -136,12 +136,14 @@ def build_archive(
                     continue
                 excludes = _load_bundle_excludes(source_path)
                 for file_path in sorted(source_path.rglob("*")):
-                    if file_path.is_file():
+                    if file_path.is_file() or file_path.is_symlink():
                         rel = file_path.relative_to(source_path)
                         if _is_excluded(rel, excludes):
                             continue
                         arcname = f"tools/{server_name}/{rel}"
-                        tar.add(file_path, arcname=arcname)
+                        tar.add(
+                            file_path, arcname=arcname, recursive=False,
+                        )
 
         # Add SBOM
         if sbom:

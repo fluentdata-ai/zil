@@ -5,6 +5,33 @@ All notable changes to the `zil-ai` package will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.14] — 2026-05-20
+
+### Added
+
+- **Generic `tools/` convention** — external tool dependencies (MCP servers, CLI tools, binaries) live under `tools/{name}/` in the project directory. Bundled into archives and Docker images during pack/deploy.
+- **`entry_point` field** — new optional field in `mcpServer` schema specifying the tool's entry point relative to its source directory (e.g. `dist/index.js`, `server.py`). Replaces hardcoded path assumptions.
+- **`.bundleignore` support** — per-tool exclusion file to control what gets bundled. Extends default exclusions (`.git/`, `src/`, `tests/`, `docs/`, `__pycache__/`, etc.).
+- **Centralized Dockerfile generation** — new `packaging/dockerfile.py` module used by `zil init`, `zil web --docker`, and `zil deploy`. Single source of truth for container configuration.
+- **`zil validate` source/entry_point checks** — validates source directory exists, entry_point file is present, and warns if source is outside the `tools/` convention.
+- **`zil web --docker` loads `.env.local`** — Docker runs now pick up both `.env` and `.env.local` files for complete environment configuration.
+
+### Fixed
+
+- **MCP path resolution in containers** — MCP server paths now resolve relative to the project root (where `tools/` lives) instead of the module subdirectory.
+- **`.dockerignore` no longer excludes `tools/*/dist/`** — changed `dist/` to `/dist/` so only the project-root dist directory is ignored, preserving tool build artifacts.
+
+## [0.1.13] — 2026-05-19
+
+### Added
+
+- **MCP server integration** — declare MCP servers in `spec.tools.mcp_servers` with stdio/SSE transport, env var resolution, tool filters, and timeouts.
+- **`host_dependencies`** — declare system packages (nodejs, git, uv) needed by MCP servers; installed in container during deploy.
+- **`--mcp` preset for `zil init`** — scaffolds MCP configuration (filesystem, git, or custom presets).
+- **MCP source bundling** — `source` field on mcpServer; `zil pack`/`zil deploy` bundles tool source under `tools/{name}/`.
+- **MCP permission audit** — `zil audit` flags over-permissioned servers, risky host deps, and long timeouts.
+- 34 MCP tests; 329 total tests.
+
 ## [0.1.12] — 2026-05-15
 
 ### Added
@@ -241,6 +268,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - JSON Schema for Zil v1 manifest (`spec/v1/manifest.schema.json`).
 - 15 CLI tests.
 
+[0.1.14]: https://github.com/fluentdata-co/zil/compare/v0.1.13...v0.1.14
+[0.1.13]: https://github.com/fluentdata-co/zil/compare/v0.1.12...v0.1.13
 [0.1.12]: https://github.com/fluentdata-co/zil/compare/v0.1.11...v0.1.12
 [0.1.11]: https://github.com/fluentdata-co/zil/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/fluentdata-co/zil/compare/v0.1.9...v0.1.10

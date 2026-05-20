@@ -401,7 +401,10 @@ def _check_tools(project_dir: Path, manifest: dict, result: ValidationResult) ->
                 return
         else:
             result.checks.append(
-                CheckResult("fail", f"spec.tools references '{tools_ref}' but config.yaml not found")
+                CheckResult(
+                    "fail",
+                    f"spec.tools references '{tools_ref}' but config.yaml not found",
+                )
             )
             return
 
@@ -425,7 +428,6 @@ def _check_tools(project_dir: Path, manifest: dict, result: ValidationResult) ->
         )
     else:
         server_names: list[str] = []
-        needs_node = False
         needs_any_host_dep: set[str] = set()
 
         for i, server in enumerate(mcp_servers):
@@ -453,7 +455,6 @@ def _check_tools(project_dir: Path, manifest: dict, result: ValidationResult) ->
                             )
                         )
                     if command in ("npx", "node", "npm"):
-                        needs_node = True
                         needs_any_host_dep.add("nodejs")
                     if command in ("uvx", "uv"):
                         needs_any_host_dep.add("uv")

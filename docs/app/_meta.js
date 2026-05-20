@@ -4,6 +4,7 @@ export default {
   cli: "CLI Reference",
   sdk: "SDK Reference",
   packaging: "Packaging & Registry",
+  tools: "MCP Tools",
   signing: "Archive Signing",
   cost: "Cost Tracking",
   "---": {
@@ -18,6 +19,7 @@ export default {
     type: "separator",
   },
   changelog: "Changelog",
+  technologies: "Technologies",
   "agent-txt": {
     title: "agent.txt",
     href: "/agent.txt",

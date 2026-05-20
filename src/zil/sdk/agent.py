@@ -185,7 +185,7 @@ def create_agent(
         if mcp_servers:
             from zil.sdk.mcp import create_mcp_toolsets_adk
 
-            mcp_toolsets = create_mcp_toolsets_adk(mcp_servers, project_dir=dir_path)
+            mcp_toolsets = create_mcp_toolsets_adk(mcp_servers, project_dir=ctx.project_dir)
             logger.info(
                 "MCP auto-wiring: %d server(s) connected",
                 len(mcp_toolsets),

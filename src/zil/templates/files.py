@@ -512,7 +512,7 @@ __pycache__/
 *.pyc
 .git/
 .env
-dist/
+/dist/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/

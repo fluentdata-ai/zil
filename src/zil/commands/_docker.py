@@ -26,15 +26,26 @@ def check_docker() -> bool:
     return True
 
 
-def find_env_file(project_dir: Path, module_dir: str) -> Path | None:
-    """Find the .env file — check module dir first, then project root."""
-    module_env = project_dir / module_dir / ".env"
-    if module_env.is_file():
-        return module_env
-    root_env = project_dir / ".env"
-    if root_env.is_file():
-        return root_env
-    return None
+def find_env_files(project_dir: Path, module_dir: str) -> list[Path]:
+    """Find env files — check module dir first, then project root.
+
+    Returns all .env and .env.local files found (Docker supports multiple
+    --env-file flags; later files override earlier ones).
+    """
+    candidates = [
+        project_dir / module_dir / ".env",
+        project_dir / ".env",
+        project_dir / module_dir / ".env.local",
+        project_dir / ".env.local",
+    ]
+    seen: set[Path] = set()
+    result: list[Path] = []
+    for c in candidates:
+        resolved = c.resolve()
+        if resolved not in seen and c.is_file():
+            seen.add(resolved)
+            result.append(c)
+    return result
 
 
 def start_otel_stack() -> str | None:
@@ -122,9 +133,8 @@ def docker_run(
         "--name", container_name,
     ]
 
-    # Pass env file if available
-    env_file = find_env_file(project_dir, module_dir)
-    if env_file:
+    # Pass env files if available
+    for env_file in find_env_files(project_dir, module_dir):
         run_cmd.extend(["--env-file", str(env_file)])
 
     # Set OTLP endpoint and service name for tracing.

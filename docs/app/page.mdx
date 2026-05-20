@@ -1,9 +1,9 @@
 # Zil Documentation
 
 Zil is a framework for building, validating, packaging, and deploying production AI agents.
-It composes with [ADK](https://google.github.io/adk-docs/), [A2A](https://google.github.io/A2A/),
+It composes with [ADK](https://google.github.io/adk-docs/),
 [MCP](https://modelcontextprotocol.io/), [DeepEval](https://github.com/confident-ai/deepeval),
-and [OpenTelemetry](https://opentelemetry.io/).
+[OpenTelemetry](https://opentelemetry.io/), [and others](/technologies).
 
 ## Install
 
@@ -74,6 +74,8 @@ my-agent/
 │   ├── __init__.py
 │   ├── agent.py           # Agent entry point
 │   └── .env.example       # API key template
+├── tools/                 # MCP server sources (bundled at pack/deploy)
+│   └── my-server/
 ├── adapters/              # LLM and embedding configuration
 │   ├── llm.yaml
 │   └── embed.yaml
@@ -92,7 +94,7 @@ my-agent/
 
 ## Guiding principles
 
-1. **Built on what exists.** Zil composes with ADK, A2A, MCP, DeepEval, and OpenTelemetry. We do not reinvent agent orchestration, tool protocols, evaluation, or telemetry.
+1. **Built on what exists.** Zil composes with ADK, MCP, DeepEval, OpenTelemetry, and [others](/technologies). We do not reinvent agent orchestration, tool protocols, evaluation, or telemetry.
 2. **Declarative-first.** The manifest is the contract. The CLI is a thin wrapper that reads, validates, and packages manifests.
 3. **No new runtime.** Agents run on whatever infrastructure you already have — Cloud Run, Bedrock, Foundry, Kubernetes.
 4. **No new registry.** Zil uses OCI-compatible registries you already have — Artifact Registry, ECR, GHCR, JFrog.
@@ -108,6 +110,7 @@ my-agent/
 - [Getting Started](/getting-started) — full walkthrough from install to deployed agent
 - [SDK Reference](/sdk) — `zil.create_agent()` API documentation
 - [CLI Reference](/cli) — detailed command documentation
+- [MCP Tools](/tools) — bundle and deploy MCP servers alongside your agent
 - [Cost Tracking](/cost) — token-based usage metering and budget enforcement
 - [Archive Signing](/signing) — cosign-based tamper evidence and provenance
 - [GitHub](https://github.com/fluentdata-co/zil) — source code and issue tracker

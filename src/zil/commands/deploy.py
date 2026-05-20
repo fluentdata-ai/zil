@@ -219,9 +219,8 @@ def _deploy_with_mcp_deps(
     module_dir: str,
 ) -> int:
     """Deploy with a custom Dockerfile that installs host dependencies."""
-    import tempfile
-
     import importlib.metadata
+    import tempfile
 
     from zil.packaging.dockerfile import generate_deploy_dockerfile
 
@@ -247,7 +246,7 @@ def _deploy_with_mcp_deps(
 
     # Copy the module dir as agents/{module_dir}/
     agents_dir = temp_path / "agents" / module_dir
-    shutil.copytree(module_path, agents_dir)
+    shutil.copytree(module_path, agents_dir, symlinks=True)
 
     console.print(
         f"→ Deploying [bold]{service_name}[/bold] to Cloud Run "
@@ -290,13 +289,6 @@ def _deploy_cloud_run(
     allow_unauthenticated: bool = False,
 ) -> None:
     """Deploy to Cloud Run via adk deploy cloud_run."""
-    if not shutil.which("adk"):
-        console.print(
-            "[red]Error:[/red] adk CLI not found. "
-            "Install it with: [bold]pip install 'zil-ai\\[adk]'[/bold]"
-        )
-        raise SystemExit(1)
-
     service_name = service or agent_name
     module_path = project_dir / module_dir
 
@@ -318,7 +310,7 @@ def _deploy_cloud_run(
             if src.is_file():
                 shutil.copy2(src, dst)
             else:
-                shutil.copytree(src, dst)
+                shutil.copytree(src, dst, symlinks=True)
             _copied_artifacts.append(dst)
 
     # Detect if MCP host dependencies need custom Dockerfile
@@ -341,6 +333,13 @@ def _deploy_cloud_run(
             host_deps, module_dir,
         )
     else:
+        if not shutil.which("adk"):
+            console.print(
+                "[red]Error:[/red] adk CLI not found. "
+                "Install it with: [bold]pip install 'zil-ai\\[adk]'[/bold]"
+            )
+            raise SystemExit(1)
+
         cmd = [
             "adk", "deploy", "cloud_run",
             f"--project={project}",

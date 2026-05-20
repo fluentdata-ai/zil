@@ -1,0 +1,403 @@
+# MCP Tools & Bundling
+
+Zil provides first-class support for [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) servers as agent tools. Declare MCP servers in your manifest, bundle their source code into archives, and deploy them alongside your agent — no separate infrastructure required.
+
+## Overview
+
+The `tools/` directory in your project root holds external tool dependencies — typically MCP servers. Each tool lives in its own subdirectory:
+
+```
+my-agent/
+├── manifest.yaml
+├── my_agent/
+│   └── agent.py
+└── tools/
+    └── my-server/        # an MCP server (e.g. Node.js, Python)
+        ├── src/
+        ├── dist/
+        ├── package.json
+        └── node_modules/
+```
+
+When you run `zil pack`, the tool source is bundled into the `.zil` archive. When you run `zil deploy`, the tool is copied into the container and started as a child process alongside your agent.
+
+## Manifest configuration
+
+### `spec.tools`
+
+Declare MCP servers and host dependencies in `manifest.yaml`:
+
+```yaml
+spec:
+  tools:
+    mcp_servers:
+      - name: quickbooks
+        transport: stdio
+        command: node
+        args:
+          - ./tools/quickbooks/dist/index.js
+        source: ./tools/quickbooks
+        entry_point: dist/index.js
+        env:
+          QUICKBOOKS_CLIENT_ID: "${QUICKBOOKS_CLIENT_ID}"
+          QUICKBOOKS_CLIENT_SECRET: "${QUICKBOOKS_CLIENT_SECRET}"
+          QUICKBOOKS_REALM_ID: "${QUICKBOOKS_REALM_ID}"
+        tool_filter:
+          - get_invoice
+          - search_invoices
+          - get_customer
+        timeout: 30
+    host_dependencies:
+      - nodejs
+```
+
+### MCP server fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | yes | Unique identifier (`lowercase-kebab`) |
+| `transport` | `stdio` \| `sse` | yes | Connection transport |
+| `command` | string | stdio only | Command to start the server process |
+| `args` | string[] | — | Arguments for the command |
+| `url` | string (URI) | sse only | URL of a remote MCP server |
+| `headers` | object | — | HTTP headers for SSE connections |
+| `env` | object | — | Environment variables passed to the server process |
+| `tool_filter` | string[] | — | Expose only these tools (omit = all tools) |
+| `timeout` | integer | — | Connection timeout in seconds (default: 10) |
+| `source` | string | — | Path to MCP server source directory to bundle |
+| `entry_point` | string | — | Entry point relative to source (e.g. `dist/index.js`, `server.py`) |
+
+### Environment variable references
+
+Use `${VAR_NAME}` syntax in `env`, `args`, `url`, and `headers` to reference environment variables declared in `spec.env`:
+
+```yaml
+spec:
+  env:
+    - name: QUICKBOOKS_CLIENT_ID
+      description: QBO OAuth Client ID
+      required: true
+      secret: true
+
+  tools:
+    mcp_servers:
+      - name: quickbooks
+        env:
+          QUICKBOOKS_CLIENT_ID: "${QUICKBOOKS_CLIENT_ID}"
+```
+
+At runtime, `${QUICKBOOKS_CLIENT_ID}` resolves from `os.environ`. `zil validate` cross-references these against `spec.env` and warns if any are undeclared.
+
+### Host dependencies
+
+If your MCP server needs system-level packages (e.g., Node.js for a JavaScript server), declare them under `host_dependencies`:
+
+```yaml
+spec:
+  tools:
+    host_dependencies:
+      - nodejs
+```
+
+Supported packages:
+
+| Name | Installs |
+|------|----------|
+| `nodejs` | `nodejs`, `npm` |
+| `git` | `git` |
+
+During deployment, Zil generates a custom Dockerfile that installs these packages via `apt-get` before copying your agent code.
+
+---
+
+## Local development
+
+### `zil run` / `zil web`
+
+When you run the agent locally, the SDK resolves MCP server paths from your project directory:
+
+1. If `entry_point` is set and the bundled path exists (`tools/{name}/{entry_point}`), use it
+2. Otherwise, resolve `args[0]` as a relative path from the project root
+3. The MCP server process is started as a child process using the declared `command` and `args`
+
+```bash
+# Run the agent — MCP servers start automatically
+zil run
+
+# Or use the web UI
+zil web
+```
+
+### `zil web --docker`
+
+Docker mode replicates the production environment locally. The Dockerfile installs host dependencies and copies the `tools/` directory:
+
+```bash
+zil web --docker
+```
+
+This builds a container with your agent, MCP server sources, and all host dependencies — identical to what gets deployed.
+
+---
+
+## Bundling into archives
+
+### How `zil pack` handles tools
+
+When `source` is declared on an MCP server, `zil pack` bundles the entire source directory into the archive under `tools/{name}/`:
+
+```
+my-agent-1.0.0.zil
+├── manifest.yaml
+├── my_agent/
+├── tools/
+│   └── quickbooks/
+│       ├── dist/
+│       ├── node_modules/
+│       ├── package.json
+│       └── ...
+└── ...
+```
+
+Symlinks (e.g., `node_modules/.bin/`) are preserved in the archive.
+
+### Default exclusions
+
+Large development-only directories are excluded from bundling:
+
+- `src/` (top-level only — nested `node_modules/*/src/` is preserved)
+- `.git/`
+- `test/`, `tests/`
+- `.env`, `.env.local`
+- `__pycache__/`
+
+### `.bundleignore`
+
+To customize exclusions per tool, create a `.bundleignore` file in the tool directory:
+
+```
+# tools/quickbooks/.bundleignore
+coverage/
+*.test.js
+docs/
+```
+
+Each line is treated as a directory or file pattern to exclude, extending the defaults.
+
+---
+
+## Deployment
+
+### What happens during deploy
+
+When `spec.tools` declares MCP servers with `source` or `host_dependencies`, `zil deploy` uses a custom deployment path:
+
+1. **Generates a Dockerfile** with `apt-get install` for host dependencies
+2. **Copies tool sources** into the build context (preserving symlinks)
+3. **Deploys via `gcloud run deploy --source`** (Cloud Build builds the image remotely)
+4. **At runtime**, the agent starts MCP server processes as child processes inside the container
+
+### Deploy from archive or registry
+
+The full pipeline works end-to-end:
+
+```bash
+# Pack (bundles tools)
+zil pack
+
+# Push to OCI registry
+zil push dist/my-agent-1.0.0.zil \
+  --registry us-central1-docker.pkg.dev/my-project/agents
+
+# Deploy from registry (pulls, extracts, deploys with tools)
+zil deploy \
+  --from us-central1-docker.pkg.dev/my-project/agents/my-agent:1.0.0 \
+  --project my-project --region us-central1 \
+  --env-file .env.production
+```
+
+### Generated Dockerfile
+
+For projects with MCP host dependencies, the generated Dockerfile looks like:
+
+```dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+
+RUN adduser --disabled-password --gecos "" myuser
+
+# Install host dependencies
+USER root
+RUN apt-get update && apt-get install -y nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+USER myuser
+
+ENV PATH="/home/myuser/.local/bin:$PATH"
+
+RUN pip install google-adk==1.x.x
+
+COPY --chown=myuser:myuser "agents/my_agent/" "/app/agents/my_agent/"
+
+EXPOSE 8000
+CMD adk web --port=8000 "/app/agents"
+```
+
+---
+
+## Validation
+
+`zil validate` checks your tools configuration:
+
+```
+✓ spec.tools — 1 MCP server(s) declared
+✓ spec.tools.mcp_servers[quickbooks] — source exists, entry_point found
+⚠ spec.tools.mcp_servers[quickbooks] — no tool_filter set (all tools exposed)
+✓ spec.tools — host_dependencies: nodejs
+✓ spec.env — all ${VAR} references in MCP config are declared
+```
+
+### What it checks
+
+| Check | Description |
+|-------|-------------|
+| **Source existence** | Fails if `source` directory doesn't exist |
+| **Entry point** | Warns if `entry_point` file is missing (may need a build step) |
+| **Transport fields** | Fails if `stdio` server has no `command`, or `sse` server has no `url` |
+| **Tool filter** | Warns if no `tool_filter` is set (exposes all tools) |
+| **Env var references** | Warns if `${VAR}` in env/args is not declared in `spec.env` |
+| **Host dependencies** | Warns if MCP server likely needs a runtime not in `host_dependencies` |
+| **Source location** | Warns if `source` points outside the `tools/` directory convention |
+
+---
+
+## Security audit
+
+`zil audit` includes an **MCP Permissions** check that flags:
+
+- **No tool filter** — exposing all tools from a server increases the attack surface
+- **Risky host dependencies** — `git` allows arbitrary repo access
+- **Long timeouts** — large timeout values may enable slow-loris style attacks
+
+```
+MCP Permissions ────────────────────────────────── WARN
+  ⚠ quickbooks — no tool_filter (all tools exposed)
+  ✓ Host dependencies: nodejs (low risk)
+  ✓ Timeout: 30s (reasonable)
+```
+
+---
+
+## Example: Node.js MCP server
+
+A complete example using the [Intuit QuickBooks Online MCP Server](https://github.com/intuit/quickbooks-online-mcp-server) — a Node.js MCP server for QuickBooks:
+
+### Project structure
+
+```
+revreq/
+├── manifest.yaml
+├── revreq/
+│   ├── __init__.py
+│   ├── agent.py
+│   └── .env.example
+├── tools/
+│   └── quickbooks/
+│       ├── src/              # TypeScript source
+│       ├── dist/             # Compiled JS (entry point)
+│       │   └── index.js
+│       ├── package.json
+│       └── node_modules/
+├── identity/
+├── adapters/
+├── .env.local                # Local dev credentials
+└── requirements.txt
+```
+
+### Manifest
+
+```yaml
+apiVersion: zil/v1
+kind: Agent
+metadata:
+  name: revreq
+  version: 0.1.0
+  description: Agent with QuickBooks integration.
+spec:
+  runtime:
+    framework: adk
+    language: python
+    llm:
+      adapter: ./adapters/llm.yaml
+  identity: ./identity
+  tools:
+    mcp_servers:
+      - name: quickbooks
+        transport: stdio
+        command: node
+        args:
+          - ./tools/quickbooks/dist/index.js
+        source: ./tools/quickbooks
+        entry_point: dist/index.js
+        env:
+          QUICKBOOKS_CLIENT_ID: "${QUICKBOOKS_CLIENT_ID}"
+          QUICKBOOKS_CLIENT_SECRET: "${QUICKBOOKS_CLIENT_SECRET}"
+          QUICKBOOKS_REFRESH_TOKEN: "${QUICKBOOKS_REFRESH_TOKEN}"
+          QUICKBOOKS_REALM_ID: "${QUICKBOOKS_REALM_ID}"
+          QUICKBOOKS_ENVIRONMENT: "${QUICKBOOKS_ENVIRONMENT}"
+        tool_filter:
+          - get_invoice
+          - search_invoices
+          - get_payment
+          - search_payments
+          - get_customer
+          - search_customers
+          - get_profit_and_loss
+          - get_balance_sheet
+          - get_aged_receivables
+        timeout: 30
+    host_dependencies:
+      - nodejs
+  env:
+    - name: GOOGLE_API_KEY
+      description: Gemini API key
+      required: true
+      secret: true
+    - name: QUICKBOOKS_CLIENT_ID
+      description: QBO OAuth Client ID
+      required: true
+      secret: true
+    - name: QUICKBOOKS_CLIENT_SECRET
+      description: QBO OAuth Client Secret
+      required: true
+      secret: true
+    - name: QUICKBOOKS_REFRESH_TOKEN
+      description: QBO OAuth Refresh Token
+      required: true
+      secret: true
+    - name: QUICKBOOKS_REALM_ID
+      description: QBO Company Realm ID
+      required: true
+    - name: QUICKBOOKS_ENVIRONMENT
+      description: sandbox or production
+      required: true
+      default: production
+```
+
+### Workflow
+
+```bash
+# Develop locally
+zil web
+
+# Test in Docker (production-like)
+zil web --docker
+
+# Package, push, deploy
+zil pack --skip-evals
+zil push dist/revreq-0.1.0.zil \
+  --registry us-central1-docker.pkg.dev/my-project/agents
+zil deploy \
+  --from us-central1-docker.pkg.dev/my-project/agents/revreq:0.1.0 \
+  --project my-project --region us-central1 \
+  --env-file .env.production --with-ui
+```
