@@ -221,11 +221,55 @@ def create_agent(
     return agent
 
 
+def _load_skills(skills_dir: Any) -> dict[str, Any]:
+    """Load all skills from a directory into a name→Skill index.
+
+    Scans *skills_dir* for subdirectories that contain a ``SKILL.md`` file,
+    loads each with ``load_skill_from_dir``, and returns a ``{name: Skill}``
+    mapping.  Missing or unreadable skills are skipped with a warning.
+    Returns an empty dict if *skills_dir* is ``None`` or does not exist.
+    """
+    if skills_dir is None:
+        return {}
+    from pathlib import Path as _Path
+    skills_path = _Path(skills_dir)
+    if not skills_path.is_dir():
+        logger.warning("spec.skills directory %r not found — skills unavailable", str(skills_path))
+        return {}
+
+    try:
+        from google.adk.skills import load_skill_from_dir
+    except ImportError:
+        logger.warning(
+            "google-adk skills module not available — SkillToolset disabled. "
+            "Install google-adk>=1.0 to enable skills support."
+        )
+        return {}
+
+    index: dict[str, Any] = {}
+    for entry in sorted(skills_path.iterdir()):
+        if not entry.is_dir():
+            continue
+        if not (entry / "SKILL.md").is_file() and not (entry / "skill.md").is_file():
+            continue
+        try:
+            skill = load_skill_from_dir(entry)
+            index[skill.name] = skill
+            logger.debug("Loaded skill %r from %s", skill.name, entry)
+        except Exception:
+            logger.warning("Could not load skill from %s — skipped", entry, exc_info=True)
+
+    logger.info("Skills index: %d skill(s) loaded from %s", len(index), skills_path)
+    return index
+
+
 def _build_sub_agents(ctx: Any, *, enable_mcp: bool = True) -> list[Any]:
     """Build sub-agent LlmAgents wrapped as AgentTool from spec.agents.
 
-    Each sub-agent gets its own identity, model, and (optionally) a filtered
-    subset of MCP toolsets from the root spec.tools.mcp_servers.
+    Each sub-agent gets its own identity, model, (optionally) a filtered
+    subset of MCP toolsets from the root spec.tools.mcp_servers, and
+    (optionally) a SkillToolset filtered to its spec.agents[].tools.skills
+    allowlist from ctx.skills_dir.
     """
     try:
         from google.adk.agents import LlmAgent
@@ -241,6 +285,9 @@ def _build_sub_agents(ctx: Any, *, enable_mcp: bool = True) -> list[Any]:
     if enable_mcp and ctx.tools_config:
         all_mcp_servers = ctx.tools_config.get("mcp_servers", [])
     mcp_by_name: dict[str, Any] = {s["name"]: s for s in all_mcp_servers}
+
+    # Load the full skills index once (empty dict if spec.skills not declared)
+    skills_index: dict[str, Any] = _load_skills(getattr(ctx, "skills_dir", None))
 
     agent_tools: list[Any] = []
     for spec in ctx.agents:
@@ -273,20 +320,51 @@ def _build_sub_agents(ctx: Any, *, enable_mcp: bool = True) -> list[Any]:
                     filtered_servers, project_dir=ctx.project_dir
                 )
 
+        # Build SkillToolset filtered to spec.agents[].tools.skills allowlist
+        skill_toolset: list[Any] = []
+        skill_names: list[str] = getattr(spec, "skill_names", []) or []
+        if skill_names and skills_index:
+            try:
+                from google.adk.tools.skill_toolset import SkillToolset
+
+                filtered_skills = [skills_index[n] for n in skill_names if n in skills_index]
+                missing = [n for n in skill_names if n not in skills_index]
+                if missing:
+                    logger.warning(
+                        "Sub-agent %r: skill(s) not found in spec.skills dir: %s",
+                        spec.name,
+                        missing,
+                    )
+                if filtered_skills:
+                    skill_toolset = [SkillToolset(skills=filtered_skills)]
+                    logger.info(
+                        "Sub-agent %r: SkillToolset with %d skill(s): %s",
+                        spec.name,
+                        len(filtered_skills),
+                        [s.name for s in filtered_skills],
+                    )
+            except ImportError:
+                logger.warning(
+                    "SkillToolset not available in installed google-adk version — "
+                    "sub-agent %r skills skipped",
+                    spec.name,
+                )
+
         sub_agent = LlmAgent(
             model=sub_model,
             name=spec.name,
             description=spec.description,
             instruction=sub_instruction,
-            tools=sub_mcp_toolsets,
+            tools=sub_mcp_toolsets + skill_toolset,
         )
 
         agent_tools.append(AgentTool(agent=sub_agent))
         logger.info(
-            "Sub-agent %r built (model=%s, mcp=%d server(s))",
+            "Sub-agent %r built (model=%s, mcp=%d server(s), skills=%d)",
             spec.name,
             sub_model,
             len(sub_mcp_toolsets),
+            len(skill_toolset),
         )
 
     return agent_tools

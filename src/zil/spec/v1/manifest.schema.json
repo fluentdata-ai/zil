@@ -368,6 +368,13 @@
           "items": {
             "type": "string"
           }
+        },
+        "skills": {
+          "type": "array",
+          "description": "Skill names from spec.skills directory to expose to this sub-agent (allowlist). Omit to expose no skills.",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },

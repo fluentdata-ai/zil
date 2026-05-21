@@ -95,6 +95,7 @@ def validate_project(project_dir: Path) -> ValidationResult:
     _check_guardrails(project_dir, manifest, result)
     _check_cost(manifest, result)
     _check_tools(project_dir, manifest, result)
+    _check_skills(project_dir, manifest, result)
     _check_agents(project_dir, manifest, result)
     _check_service(manifest, result)
 
@@ -588,6 +589,54 @@ def _check_env_refs(
                     f"references '${{{var_name}}}' but it is not declared in spec.env",
                 )
             )
+
+
+def _check_skills(project_dir: Path, manifest: dict, result: ValidationResult) -> None:
+    """Validate spec.skills directory and per-agent skill name references."""
+    spec = manifest.get("spec", {})
+    skills_ref = spec.get("skills")
+
+    if not skills_ref:
+        return
+
+    skills_path = project_dir / skills_ref
+    if not skills_path.is_dir():
+        result.checks.append(
+            CheckResult("warn", f"spec.skills — directory '{skills_ref}' not found")
+        )
+        return
+
+    # Enumerate available skill names (dirs with a SKILL.md)
+    available_skill_names: set[str] = set()
+    for entry in sorted(skills_path.iterdir()):
+        if entry.is_dir() and (
+            (entry / "SKILL.md").is_file() or (entry / "skill.md").is_file()
+        ):
+            available_skill_names.add(entry.name)
+
+    result.checks.append(
+        CheckResult(
+            "pass",
+            f"spec.skills — directory present ({len(available_skill_names)} skill(s): "
+            + (', '.join(sorted(available_skill_names)) if available_skill_names else 'none')
+            + ")",
+        )
+    )
+
+    # Cross-check each sub-agent's skills allowlist
+    agents = spec.get("agents") or []
+    for agent in agents:
+        agent_name = agent.get("name", "<unnamed>")
+        agent_skill_names: list[str] = (agent.get("tools") or {}).get("skills") or []
+        for skill_name in agent_skill_names:
+            if skill_name not in available_skill_names:
+                result.checks.append(
+                    CheckResult(
+                        "warn",
+                        f"spec.agents[{agent_name}].tools.skills — '{skill_name}' "
+                        "not found in spec.skills directory",
+                    )
+                )
 
 
 def _check_agents(project_dir: Path, manifest: dict, result: ValidationResult) -> None:

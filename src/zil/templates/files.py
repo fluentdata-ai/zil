@@ -36,6 +36,7 @@ def _manifest(c: InitConfig) -> str:
     tools_block = _manifest_tools_block(c)
     agents_block = _manifest_agents_block(c)
     service_block = _manifest_service_block(c)
+    skills_line = '  skills: ./skills' if getattr(c, 'skill_names', []) else '  # skills: ./skills'
     identity_line = (
         '  identity: ./identity' if not c.agent_names
         else '  # identity: ./identity  # omitted — sub-agents carry their own identities'
@@ -62,7 +63,8 @@ spec:
       max_tokens_per_request: 8192
       max_duration_seconds: 120
 {service_block}{identity_line}
-{agents_block}{evals_line}
+{agents_block}{skills_line}
+{evals_line}
 {obs_line}
   # cost:
   #   max_tokens_per_request: 8192
@@ -158,6 +160,7 @@ def _manifest_agents_block(c: InitConfig) -> str:
     """Generate the spec.agents block for a multi-agent manifest."""
     if not c.agent_names:
         return ""
+    skill_names: list[str] = getattr(c, 'skill_names', []) or []
     lines = ["  agents:"]
     for agent in c.agent_names:
         agent_id = agent.replace("-", "_")
@@ -171,6 +174,8 @@ def _manifest_agents_block(c: InitConfig) -> str:
             f"      # tools:",
             f"      #   mcp_servers: []  # reference names from spec.tools.mcp_servers",
         ]
+        if skill_names:
+            lines.append(f"      #   skills: []  # reference names from spec.skills (e.g. {', '.join(skill_names)})")
     return "\n".join(lines) + "\n"
 
 
@@ -824,6 +829,11 @@ def _render_extra_files(project_dir: "Path", c: InitConfig) -> None:
     if c.service_mode == "webhook":
         _render_webhook_files(project_dir, c)
 
+    # Skills scaffold
+    skill_names: list[str] = getattr(c, 'skill_names', []) or []
+    if skill_names:
+        _render_skill_files(project_dir, c)
+
 
 def _render_webhook_files(project_dir: "Path", c: InitConfig) -> None:
     """Render app.py and runner.py into the module directory."""
@@ -1030,3 +1040,48 @@ class AgentRunner:
         ):
             pass
 '''
+
+
+def _render_skill_files(project_dir: "Path", c: "InitConfig") -> None:
+    """Render a stub SKILL.md for each named skill into skills/<name>/SKILL.md."""
+    from pathlib import Path
+
+    skill_names: list[str] = getattr(c, 'skill_names', []) or []
+    if not skill_names:
+        return
+    skills_root = project_dir / "skills"
+    skills_root.mkdir(parents=True, exist_ok=True)
+    for skill_name in skill_names:
+        skill_dir = skills_root / skill_name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        skill_md = skill_dir / "SKILL.md"
+        skill_md.write_text(_skill_md_template(skill_name), encoding="utf-8")
+
+
+def _skill_md_template(name: str) -> str:
+    """Return a minimal valid SKILL.md stub for the given skill name."""
+    return f"""\
+---
+name: {name}
+description: >
+  {name} skill. Replace this description with what the skill does and when
+  agents should invoke it (used for discovery and routing).
+license: Apache-2.0
+---
+
+# {name}
+
+## Overview
+
+Describe what this skill does and when it should be used.
+
+## Steps
+
+1. Step one.
+2. Step two.
+3. Step three.
+
+## Notes
+
+Add any caveats, required environment variables, or tool prerequisites here.
+"""

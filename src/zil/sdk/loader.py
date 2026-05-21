@@ -23,6 +23,11 @@ class AgentSpec:
     model_env_var: str | None
     mcp_server_names: list[str]
     description: str
+    skill_names: list[str] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.skill_names is None:
+            self.skill_names = []
 
 
 class ProjectContext:
@@ -40,6 +45,7 @@ class ProjectContext:
         tools_config: dict[str, Any] | None = None,
         agents: list[AgentSpec] | None = None,
         service_config: dict[str, Any] | None = None,
+        skills_dir: Path | None = None,
     ) -> None:
         self.project_dir = project_dir
         self.manifest = manifest
@@ -51,6 +57,7 @@ class ProjectContext:
         self.tools_config = tools_config
         self.agents: list[AgentSpec] = agents or []
         self.service_config = service_config
+        self.skills_dir: Path | None = skills_dir
 
     @property
     def name(self) -> str:
@@ -113,6 +120,7 @@ def load_project(project_dir: Path | None = None) -> ProjectContext:
     tools_config = _load_tools(root, manifest)
     agents = _load_agents(root, manifest, llm_adapter)
     service_config = _load_service(manifest)
+    skills_dir = _load_skills_dir(root, manifest)
 
     env_declarations = manifest.get("spec", {}).get("env", [])
     cost_config = manifest.get("spec", {}).get("cost")
@@ -128,6 +136,7 @@ def load_project(project_dir: Path | None = None) -> ProjectContext:
         tools_config=tools_config,
         agents=agents,
         service_config=service_config,
+        skills_dir=skills_dir,
     )
 
 
@@ -236,6 +245,9 @@ def _load_agents(
         # Resolve MCP server name references (just names — wiring happens in agent.py)
         mcp_server_names: list[str] = (raw.get("tools") or {}).get("mcp_servers") or []
 
+        # Resolve skill name references (allowlist — SkillToolset built in agent.py)
+        skill_names: list[str] = (raw.get("tools") or {}).get("skills") or []
+
         result.append(AgentSpec(
             name=name,
             role=role,
@@ -245,6 +257,7 @@ def _load_agents(
             model_env_var=model_env_var,
             mcp_server_names=mcp_server_names,
             description=description,
+            skill_names=skill_names,
         ))
 
     return result
@@ -260,6 +273,17 @@ def _load_identity_from_dir(
     guardrails_path = identity_dir / "guardrails.yaml"
     guardrails = _load_yaml(guardrails_path) if guardrails_path.is_file() else None
     return IdentityContext(persona=persona, instructions=instructions, guardrails=guardrails)
+
+
+def _load_skills_dir(root: Path, manifest: dict[str, Any]) -> Path | None:
+    """Resolve spec.skills to an absolute path if declared, else None."""
+    skills_ref = manifest.get("spec", {}).get("skills")
+    if not skills_ref:
+        return None
+    skills_path = (root / skills_ref).resolve()
+    if skills_path.is_dir():
+        return skills_path
+    return None
 
 
 def _load_service(manifest: dict[str, Any]) -> dict[str, Any] | None:

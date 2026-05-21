@@ -41,6 +41,13 @@ SERVICE_MODES = ["none", "webhook"]
     help="Comma-separated sub-agent names for multi-agent scaffold (e.g. vta,vtd).",
 )
 @click.option(
+    "--skills",
+    "skill_names",
+    type=str,
+    default=None,
+    help="Comma-separated skill names to scaffold in skills/ (e.g. fd-submit-changes,fd-run-tests).",
+)
+@click.option(
     "--service",
     "service_mode",
     type=click.Choice(SERVICE_MODES, case_sensitive=False),
@@ -59,6 +66,7 @@ def init(
     no_otel: bool,
     mcp_preset: str | None,
     agent_names: str | None,
+    skill_names: str | None,
     service_mode: str | None,
     non_interactive: bool,
 ) -> None:
@@ -89,6 +97,11 @@ def init(
     if agent_names:
         parsed_agents = [a.strip() for a in agent_names.split(",") if a.strip()]
 
+    # Parse skill names from comma-separated string
+    parsed_skills: list[str] = []
+    if skill_names:
+        parsed_skills = [s.strip() for s in skill_names.split(",") if s.strip()]
+
     config = InitConfig(
         name=name,
         framework="adk",
@@ -100,6 +113,7 @@ def init(
         include_otel=include_otel,
         mcp_preset=mcp_preset if mcp_preset != "none" else None,
         agent_names=parsed_agents,
+        skill_names=parsed_skills,
         service_mode=service_mode if service_mode != "none" else None,
     )
 
@@ -143,6 +157,7 @@ class InitConfig:
         include_otel: bool,
         mcp_preset: str | None = None,
         agent_names: list[str] | None = None,
+        skill_names: list[str] | None = None,
         service_mode: str | None = None,
     ) -> None:
         self.name = name
@@ -155,6 +170,7 @@ class InitConfig:
         self.include_otel = include_otel
         self.mcp_preset = mcp_preset
         self.agent_names: list[str] = agent_names or []
+        self.skill_names: list[str] = skill_names or []
         self.service_mode: str | None = service_mode
 
     @property
