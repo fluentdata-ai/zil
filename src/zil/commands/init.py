@@ -12,6 +12,7 @@ console = Console()
 
 LLM_PROVIDERS = ["gemini", "anthropic", "openai", "vertex"]
 MCP_PRESETS = ["none", "filesystem", "git", "custom"]
+SERVICE_MODES = ["none", "webhook"]
 
 
 @click.command()
@@ -33,6 +34,20 @@ MCP_PRESETS = ["none", "filesystem", "git", "custom"]
     help="Include MCP server scaffolding (default: none).",
 )
 @click.option(
+    "--agents",
+    "agent_names",
+    type=str,
+    default=None,
+    help="Comma-separated sub-agent names for multi-agent scaffold (e.g. vta,vtd).",
+)
+@click.option(
+    "--service",
+    "service_mode",
+    type=click.Choice(SERVICE_MODES, case_sensitive=False),
+    default=None,
+    help="Service entry-point mode: 'webhook' scaffolds FastAPI app.py + runner.py.",
+)
+@click.option(
     "--non-interactive",
     is_flag=True,
     help="Use defaults for all prompts.",
@@ -43,6 +58,8 @@ def init(
     no_evals: bool,
     no_otel: bool,
     mcp_preset: str | None,
+    agent_names: str | None,
+    service_mode: str | None,
     non_interactive: bool,
 ) -> None:
     """Scaffold a new Zil agent project.
@@ -67,6 +84,11 @@ def init(
     include_evals = not no_evals
     include_otel = not no_otel
 
+    # Parse sub-agent names from comma-separated string
+    parsed_agents: list[str] = []
+    if agent_names:
+        parsed_agents = [a.strip() for a in agent_names.split(",") if a.strip()]
+
     config = InitConfig(
         name=name,
         framework="adk",
@@ -77,6 +99,8 @@ def init(
         include_evals=include_evals,
         include_otel=include_otel,
         mcp_preset=mcp_preset if mcp_preset != "none" else None,
+        agent_names=parsed_agents,
+        service_mode=service_mode if service_mode != "none" else None,
     )
 
     console.print()
@@ -118,6 +142,8 @@ class InitConfig:
         include_evals: bool,
         include_otel: bool,
         mcp_preset: str | None = None,
+        agent_names: list[str] | None = None,
+        service_mode: str | None = None,
     ) -> None:
         self.name = name
         self.framework = framework
@@ -128,6 +154,8 @@ class InitConfig:
         self.include_evals = include_evals
         self.include_otel = include_otel
         self.mcp_preset = mcp_preset
+        self.agent_names: list[str] = agent_names or []
+        self.service_mode: str | None = service_mode
 
     @property
     def module_name(self) -> str:

@@ -46,7 +46,7 @@
     },
     "spec": {
       "type": "object",
-      "required": ["runtime", "identity"],
+      "required": ["runtime"],
       "additionalProperties": false,
       "properties": {
         "runtime": {
@@ -56,7 +56,15 @@
         "identity": {
           "type": "string",
           "default": "./identity",
-          "description": "Path to the identity directory."
+          "description": "Path to the root agent identity directory. Required unless spec.agents is present."
+        },
+        "agents": {
+          "type": "array",
+          "description": "Sub-agent definitions for multi-agent hierarchies.",
+          "items": {
+            "$ref": "#/$defs/agentSpec"
+          },
+          "minItems": 1
         },
         "skills": {
           "type": "string",
@@ -289,6 +297,189 @@
             "max_duration_seconds": {
               "type": "integer",
               "minimum": 1
+            }
+          }
+        },
+        "service": {
+          "$ref": "#/$defs/serviceConfig",
+          "description": "HTTP service configuration (webhook entry-point and HITL)."
+        }
+      }
+    },
+    "agentSpec": {
+      "type": "object",
+      "required": ["name", "identity"],
+      "additionalProperties": false,
+      "description": "Sub-agent definition in a multi-agent hierarchy.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "description": "Unique sub-agent identifier."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["sub-agent", "supervisor", "peer"],
+          "default": "sub-agent",
+          "description": "Role in the agent hierarchy."
+        },
+        "identity": {
+          "type": "string",
+          "description": "Path to this sub-agent's identity directory (persona.md, instructions.md, optional guardrails.yaml)."
+        },
+        "llm": {
+          "$ref": "#/$defs/agentLlm",
+          "description": "LLM configuration for this sub-agent (overrides root adapter)."
+        },
+        "tools": {
+          "$ref": "#/$defs/agentTools",
+          "description": "Tool configuration for this sub-agent."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of what this sub-agent does (used as ADK agent description)."
+        }
+      }
+    },
+    "agentLlm": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Per-agent LLM configuration.",
+      "properties": {
+        "adapter": {
+          "type": "string",
+          "description": "Path to LLM adapter YAML (defaults to root spec.runtime.llm.adapter)."
+        },
+        "model_env_var": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$",
+          "description": "Environment variable to override the model at runtime (e.g. AGENT_VTA_MODEL)."
+        }
+      }
+    },
+    "agentTools": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Per-agent tool configuration.",
+      "properties": {
+        "mcp_servers": {
+          "type": "array",
+          "description": "Names of MCP servers from spec.tools.mcp_servers to attach to this sub-agent.",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "serviceConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "HTTP service entry-point configuration.",
+      "properties": {
+        "entry_point": {
+          "type": "string",
+          "enum": ["adk", "webhook", "custom"],
+          "default": "adk",
+          "description": "How the agent is triggered: 'adk' = ADK dev runner, 'webhook' = FastAPI HTTP service."
+        },
+        "webhooks": {
+          "type": "array",
+          "description": "Inbound webhook sources the agent accepts.",
+          "items": {
+            "$ref": "#/$defs/webhookSource"
+          }
+        },
+        "human_interaction": {
+          "$ref": "#/$defs/humanInteraction",
+          "description": "Human-in-the-loop configuration."
+        }
+      }
+    },
+    "webhookSource": {
+      "type": "object",
+      "required": ["name", "path"],
+      "additionalProperties": false,
+      "description": "An inbound webhook source definition.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "description": "Unique webhook source identifier."
+        },
+        "path": {
+          "type": "string",
+          "description": "URL path for this webhook (e.g. /webhooks/jira)."
+        },
+        "signature_header": {
+          "type": "string",
+          "description": "HTTP header used for HMAC signature verification (e.g. X-Hub-Signature-256)."
+        },
+        "algorithm": {
+          "type": "string",
+          "enum": ["sha256", "sha1", "sha512"],
+          "default": "sha256",
+          "description": "HMAC algorithm used to verify the signature."
+        },
+        "secret_env": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$",
+          "description": "Environment variable holding the webhook signing secret."
+        },
+        "events": {
+          "type": "array",
+          "description": "Event type filter (e.g. [jira:issue_created]). Empty = accept all.",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "humanInteraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Human-in-the-loop (HITL) configuration.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable HITL support."
+        },
+        "response_path": {
+          "type": "string",
+          "default": "/human/respond",
+          "description": "URL path for the human response endpoint."
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 86400,
+          "description": "Seconds to wait for a human response before triggering timeout_action."
+        },
+        "timeout_action": {
+          "type": "string",
+          "enum": ["abort", "proceed", "escalate"],
+          "default": "abort",
+          "description": "Action to take when timeout_seconds elapses without a human response."
+        },
+        "notify": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Notification channel used to reach the human when input is needed.",
+          "properties": {
+            "channel": {
+              "type": "string",
+              "enum": ["jira_comment", "slack", "http_callback"],
+              "description": "Built-in notification channel."
+            },
+            "issue_key_env": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]*$",
+              "description": "Env var holding the Jira issue key (required for jira_comment channel)."
+            },
+            "webhook_url_env": {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9_]*$",
+              "description": "Env var holding the target URL (required for http_callback and slack channels)."
             }
           }
         }

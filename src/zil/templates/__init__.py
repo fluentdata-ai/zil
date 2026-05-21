@@ -28,11 +28,19 @@ def render_project(project_dir: Path, config: InitConfig) -> None:
             continue
         if rel_path.startswith("observability/") and not config.include_otel:
             continue
+        if rel_path == "__multi_agent_skip__":
+            continue
+        if rel_path.startswith("agents/__placeholder__"):
+            continue
 
         target.parent.mkdir(parents=True, exist_ok=True)
         content = renderer(config)
         target.write_text(content)
         console.print(f"  [green]\u2713[/green] Created {rel_path}")
+
+    # Render extra files (multi-agent identity dirs, webhook app.py/runner.py)
+    from zil.templates.files import _render_extra_files
+    _render_extra_files(project_dir, config)
 
     # Init git only if we're not already inside a git repo
     import subprocess

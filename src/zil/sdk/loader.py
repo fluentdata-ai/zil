@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 MANIFEST_FILENAME = "manifest.yaml"
+
+
+@dataclass
+class AgentSpec:
+    """Resolved configuration for a single sub-agent in a multi-agent hierarchy."""
+
+    name: str
+    role: str
+    identity: IdentityContext
+    identity_path: Path
+    llm_adapter: dict[str, Any]
+    model_env_var: str | None
+    mcp_server_names: list[str]
+    description: str
 
 
 class ProjectContext:
@@ -23,6 +38,8 @@ class ProjectContext:
         env_declarations: list[dict[str, Any]] | None = None,
         cost_config: dict[str, Any] | None = None,
         tools_config: dict[str, Any] | None = None,
+        agents: list[AgentSpec] | None = None,
+        service_config: dict[str, Any] | None = None,
     ) -> None:
         self.project_dir = project_dir
         self.manifest = manifest
@@ -32,6 +49,8 @@ class ProjectContext:
         self.env_declarations = env_declarations or []
         self.cost_config = cost_config
         self.tools_config = tools_config
+        self.agents: list[AgentSpec] = agents or []
+        self.service_config = service_config
 
     @property
     def name(self) -> str:
@@ -92,6 +111,8 @@ def load_project(project_dir: Path | None = None) -> ProjectContext:
     llm_adapter = _load_llm_adapter(root, manifest)
     observability = _load_observability(root, manifest)
     tools_config = _load_tools(root, manifest)
+    agents = _load_agents(root, manifest, llm_adapter)
+    service_config = _load_service(manifest)
 
     env_declarations = manifest.get("spec", {}).get("env", [])
     cost_config = manifest.get("spec", {}).get("cost")
@@ -105,6 +126,8 @@ def load_project(project_dir: Path | None = None) -> ProjectContext:
         env_declarations=env_declarations,
         cost_config=cost_config,
         tools_config=tools_config,
+        agents=agents,
+        service_config=service_config,
     )
 
 
@@ -129,18 +152,7 @@ def _load_identity(root: Path, manifest: dict[str, Any]) -> IdentityContext:
     """Load persona, instructions, and guardrails from the identity directory."""
     identity_path = manifest.get("spec", {}).get("identity", "./identity")
     identity_dir = (root / identity_path).resolve()
-
-    persona = _read_text(identity_dir / "persona.md")
-    instructions = _read_text(identity_dir / "instructions.md")
-
-    guardrails_path = identity_dir / "guardrails.yaml"
-    guardrails = _load_yaml(guardrails_path) if guardrails_path.is_file() else None
-
-    return IdentityContext(
-        persona=persona,
-        instructions=instructions,
-        guardrails=guardrails,
-    )
+    return _load_identity_from_dir(identity_dir)
 
 
 def _load_observability(root: Path, manifest: dict[str, Any]) -> dict[str, Any] | None:
@@ -188,3 +200,72 @@ def _load_llm_adapter(root: Path, manifest: dict[str, Any]) -> dict[str, Any]:
             "Check spec.runtime.llm.adapter in manifest.yaml."
         )
     return _load_yaml(full_path)
+
+
+def _load_agents(
+    root: Path,
+    manifest: dict[str, Any],
+    root_llm_adapter: dict[str, Any],
+) -> list[AgentSpec]:
+    """Load sub-agent specs from spec.agents, if present."""
+    agents_raw = manifest.get("spec", {}).get("agents")
+    if not agents_raw:
+        return []
+
+    result: list[AgentSpec] = []
+    for raw in agents_raw:
+        name = raw["name"]
+        role = raw.get("role", "sub-agent")
+        description = raw.get("description", f"{name} sub-agent")
+
+        # Resolve identity
+        identity_ref = raw["identity"]
+        identity_dir = (root / identity_ref).resolve()
+        identity = _load_identity_from_dir(identity_dir, root_llm_adapter)
+
+        # Resolve LLM adapter — sub-agent can override root adapter
+        llm_cfg = raw.get("llm") or {}
+        adapter_ref = llm_cfg.get("adapter")
+        if adapter_ref:
+            adapter_path = (root / adapter_ref).resolve()
+            llm_adapter = _load_yaml(adapter_path) if adapter_path.is_file() else root_llm_adapter
+        else:
+            llm_adapter = root_llm_adapter
+        model_env_var: str | None = llm_cfg.get("model_env_var")
+
+        # Resolve MCP server name references (just names — wiring happens in agent.py)
+        mcp_server_names: list[str] = (raw.get("tools") or {}).get("mcp_servers") or []
+
+        result.append(AgentSpec(
+            name=name,
+            role=role,
+            identity=identity,
+            identity_path=identity_dir,
+            llm_adapter=llm_adapter,
+            model_env_var=model_env_var,
+            mcp_server_names=mcp_server_names,
+            description=description,
+        ))
+
+    return result
+
+
+def _load_identity_from_dir(
+    identity_dir: Path,
+    _llm_adapter: dict[str, Any] | None = None,
+) -> IdentityContext:
+    """Load identity from an arbitrary directory (shared logic for root + sub-agents)."""
+    persona = _read_text(identity_dir / "persona.md")
+    instructions = _read_text(identity_dir / "instructions.md")
+    guardrails_path = identity_dir / "guardrails.yaml"
+    guardrails = _load_yaml(guardrails_path) if guardrails_path.is_file() else None
+    return IdentityContext(persona=persona, instructions=instructions, guardrails=guardrails)
+
+
+def _load_service(manifest: dict[str, Any]) -> dict[str, Any] | None:
+    """Load spec.runtime.service configuration if present."""
+    return (
+        manifest.get("spec", {})
+        .get("runtime", {})
+        .get("service")
+    )

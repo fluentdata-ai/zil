@@ -1,8 +1,11 @@
 """zil deploy — deploy the agent to Cloud Run."""
 
+import json
 import os
+import re
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +14,7 @@ import yaml
 from rich.console import Console
 from rich.prompt import Prompt
 
-console = Console()
+console = Console()  # All Rich output goes through here (stderr in production, captured by CliRunner in tests)
 
 
 def _resolve_module(project_dir: Path) -> str:
@@ -217,6 +220,7 @@ def _deploy_with_mcp_deps(
     allow_unauthenticated: bool,
     host_deps: list[str],
     module_dir: str,
+    cloud_sql_instance: str | None = None,
 ) -> int:
     """Deploy with a custom Dockerfile that installs host dependencies."""
     import importlib.metadata
@@ -268,12 +272,103 @@ def _deploy_with_mcp_deps(
         cmd.append(f"--set-env-vars={env_pairs}")
     if allow_unauthenticated:
         cmd.append("--allow-unauthenticated")
+    if cloud_sql_instance:
+        cmd.append(f"--add-cloudsql-instances={cloud_sql_instance}")
+        console.print(
+            f"  Cloud SQL: attaching instance [bold]{cloud_sql_instance}[/bold] "
+            "(detected from SESSION_DB_URI)"
+        )
 
     result = subprocess.call(cmd)
 
     # Cleanup
     shutil.rmtree(temp_dir, ignore_errors=True)
     return result
+
+
+def _fetch_service_url(service_name: str, project: str, region: str) -> str | None:
+    """Query Cloud Run for the live service URL."""
+    try:
+        out = subprocess.check_output(
+            [
+                "gcloud", "run", "services", "describe", service_name,
+                f"--project={project}",
+                f"--region={region}",
+                "--format=value(status.url)",
+            ],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        url = out.strip()
+        return url if url else None
+    except subprocess.CalledProcessError:
+        return None
+
+
+def _build_deploy_result(
+    manifest: dict,
+    service_name: str,
+    project: str,
+    region: str,
+    cloud_sql_instance: str | None,
+) -> dict[str, Any]:
+    """Build a structured deploy result dict, querying gcloud for the URL."""
+    url = _fetch_service_url(service_name, project, region)
+
+    # Derive webhook / HITL endpoints from manifest service config
+    service_cfg = manifest.get("spec", {}).get("runtime", {}).get("service", {})
+    endpoints: dict[str, Any] = {"agent": url}
+
+    if service_cfg:
+        webhooks = service_cfg.get("webhooks", [])
+        if url and webhooks:
+            endpoints["webhooks"] = [
+                f"{url}{wh['path']}" for wh in webhooks if wh.get("path")
+            ]
+        hitl = service_cfg.get("human_interaction", {})
+        if hitl.get("enabled"):
+            response_path = hitl.get("response_path", "/human/respond")
+            endpoints["hitl_respond"] = f"{url}{response_path}" if url else response_path
+
+    result: dict[str, Any] = {
+        "service": service_name,
+        "project": project,
+        "region": region,
+        "url": url,
+        "endpoints": endpoints,
+        "deployed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    if cloud_sql_instance:
+        result["cloud_sql_instance"] = cloud_sql_instance
+    return result
+
+
+def _emit_deploy_result(result: dict[str, Any] | None, output_format: str) -> None:
+    """Print deploy result in the requested format.
+
+    JSON goes to stdout (clean for pipes/CI).
+    Rich-formatted text summary goes to stderr (same as all other console output).
+    """
+    if not result:
+        return
+    if output_format == "json":
+        # click.echo writes to sys.stdout directly — clean for pipes/CI
+        click.echo(json.dumps(result, indent=2))
+        return
+    # text mode: print a human-readable summary of key endpoints
+    url = result.get("url")
+    endpoints = result.get("endpoints", {})
+    if url:
+        console.print(f"  URL: [link={url}]{url}[/link]")
+    webhooks = endpoints.get("webhooks", [])
+    for wh_url in webhooks:
+        console.print(f"  Webhook: {wh_url}")
+    hitl_url = endpoints.get("hitl_respond")
+    if hitl_url:
+        console.print(f"  HITL respond: {hitl_url}")
+    sql = result.get("cloud_sql_instance")
+    if sql:
+        console.print(f"  Cloud SQL: {sql}")
 
 
 def _deploy_cloud_run(
@@ -287,7 +382,7 @@ def _deploy_cloud_run(
     with_ui: bool,
     env_vars: dict[str, str] | None = None,
     allow_unauthenticated: bool = False,
-) -> None:
+) -> dict[str, Any]:
     """Deploy to Cloud Run via adk deploy cloud_run."""
     service_name = service or agent_name
     module_path = project_dir / module_dir
@@ -325,12 +420,23 @@ def _deploy_cloud_run(
             if srv.get("source"):
                 has_mcp_source = True
 
+    # Resolve Cloud SQL instance from SESSION_DB_URI (used in both deploy paths)
+    cloud_sql_instance: str | None = None
+    session_uri = env_vars.get("SESSION_DB_URI") if env_vars else None
+    if not session_uri:
+        session_uri = os.environ.get("SESSION_DB_URI")
+    if session_uri and "/cloudsql/" in session_uri:
+        m = re.search(r"/cloudsql/([^/]+)/", session_uri)
+        if m:
+            cloud_sql_instance = m.group(1)
+
     if host_deps or has_mcp_source:
         # Use custom deploy path that injects host deps into Dockerfile
         result = _deploy_with_mcp_deps(
             module_path, project, region, service_name,
             trace, with_ui, env_vars, allow_unauthenticated,
             host_deps, module_dir,
+            cloud_sql_instance=cloud_sql_instance,
         )
     else:
         if not shutil.which("adk"):
@@ -363,6 +469,15 @@ def _deploy_cloud_run(
             gcloud_args.append(f"--set-env-vars={env_pairs}")
         if allow_unauthenticated:
             gcloud_args.append("--allow-unauthenticated")
+
+        # Cloud SQL session wiring (cloud_sql_instance resolved above)
+        if cloud_sql_instance:
+            gcloud_args.append(f"--add-cloudsql-instances={cloud_sql_instance}")
+            console.print(
+                f"  Cloud SQL: attaching instance [bold]{cloud_sql_instance}[/bold] "
+                "(detected from SESSION_DB_URI)"
+            )
+
         if gcloud_args:
             cmd.append("--")
             cmd.extend(gcloud_args)
@@ -396,6 +511,14 @@ def _deploy_cloud_run(
         console.print(
             "  Traces: Google Cloud Console → Trace Explorer"
         )
+
+    return _build_deploy_result(
+        manifest=manifest,
+        service_name=service_name,
+        project=project,
+        region=region,
+        cloud_sql_instance=cloud_sql_instance,
+    )
 
 
 @click.command()
@@ -451,6 +574,12 @@ def _deploy_cloud_run(
     is_flag=True, default=False,
     help="Allow unauthenticated access to the Cloud Run service.",
 )
+@click.option(
+    "--output", "output_format",
+    type=click.Choice(["text", "json"], case_sensitive=False),
+    default="text",
+    help="Output format after deploy: 'text' (default) or 'json' (machine-readable).",
+)
 def deploy(
     project_dir: Path,
     gcp_project: str | None,
@@ -462,14 +591,16 @@ def deploy(
     from_ref: str | None,
     env_file: Path | None,
     allow_unauthenticated: bool,
+    output_format: str,
 ) -> None:
     """Deploy the agent to Cloud Run."""
     # If --from is specified, deploy from artifact
     if from_ref:
-        _deploy_from_artifact(
+        result = _deploy_from_artifact(
             from_ref, gcp_project, gcp_region, service, trace, with_ui, env_file,
             allow_unauthenticated,
         )
+        _emit_deploy_result(result, output_format)
         return
 
     project_dir = project_dir.resolve()
@@ -517,11 +648,12 @@ def deploy(
         count = len(env_vars)
         console.print(f"[green]✓[/green] Resolved {count} env variable(s)")
 
-    _deploy_cloud_run(
+    deploy_result = _deploy_cloud_run(
         project_dir, agent_name, module_dir,
         project, region, service, trace, with_ui, env_vars,
         allow_unauthenticated,
     )
+    _emit_deploy_result(deploy_result, output_format)
 
 
 def _deploy_from_artifact(
@@ -533,7 +665,7 @@ def _deploy_from_artifact(
     with_ui: bool,
     env_file: Path | None = None,
     allow_unauthenticated: bool = False,
-) -> None:
+) -> dict[str, Any]:
     """Deploy from a .zil archive or OCI registry reference."""
     import tempfile
 
@@ -600,7 +732,7 @@ def _deploy_from_artifact(
         count = len(env_vars)
         console.print(f"[green]✓[/green] Resolved {count} env variable(s)")
 
-    _deploy_cloud_run(
+    return _deploy_cloud_run(
         project_dir, agent_name, module_dir,
         project, region, service, trace, with_ui, env_vars,
         allow_unauthenticated,

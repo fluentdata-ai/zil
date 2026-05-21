@@ -224,6 +224,258 @@ class TestWebDockerMode:
         assert "--docker" in result.output
 
 
+def _parse_json_from_output(output: str) -> dict:
+    """Extract the JSON object from mixed Rich+JSON output."""
+    import json
+    start = output.index("{")
+    return json.loads(output[start:])
+
+
+class TestDeployOutputJson:
+    """Tests for --output json and the structured deploy result."""
+
+    def _deploy_with_json_output(self, tmp_path, service_cfg=None):
+        """Helper: run zil deploy --output json with gcloud/adk fully mocked."""
+        import yaml
+
+        manifest = {
+            "apiVersion": "zil/v1",
+            "kind": "Agent",
+            "metadata": {"name": "test-agent", "version": "0.1.0"},
+            "spec": {
+                "runtime": {
+                    "framework": "adk",
+                    "language": "python",
+                    **({"service": service_cfg} if service_cfg else {}),
+                },
+                "identity": "./identity",
+            },
+        }
+        (tmp_path / "manifest.yaml").write_text(yaml.dump(manifest))
+        module_dir = tmp_path / "test_agent"
+        module_dir.mkdir()
+        (module_dir / "__init__.py").write_text("")
+
+        with patch("zil.commands.deploy.subprocess.call", return_value=0), \
+             patch("zil.commands.deploy.subprocess.run",
+                   return_value=MagicMock(returncode=0, stdout="my-project\n", stderr="")), \
+             patch("zil.commands.deploy.shutil.which", return_value="/usr/bin/gcloud"), \
+             patch("zil.commands.deploy.subprocess.check_output",
+                   return_value="https://test-agent-abc-uc.a.run.app\n"):
+            return runner.invoke(
+                cli,
+                [
+                    "deploy", "--skip-evals",
+                    "--project-dir", str(tmp_path),
+                    "--project", "my-project",
+                    "--region", "us-central1",
+                    "--output", "json",
+                ],
+                catch_exceptions=False,
+            )
+
+    def test_output_json_exit_code_zero(self, tmp_path):
+        result = self._deploy_with_json_output(tmp_path)
+        assert result.exit_code == 0
+
+    def test_output_json_is_valid_json(self, tmp_path):
+        result = self._deploy_with_json_output(tmp_path)
+        parsed = _parse_json_from_output(result.output)
+        assert isinstance(parsed, dict)
+
+    def test_output_json_contains_service(self, tmp_path):
+        result = self._deploy_with_json_output(tmp_path)
+        parsed = _parse_json_from_output(result.output)
+        assert parsed["service"] == "test-agent"
+
+    def test_output_json_contains_project_and_region(self, tmp_path):
+        result = self._deploy_with_json_output(tmp_path)
+        parsed = _parse_json_from_output(result.output)
+        assert parsed["project"] == "my-project"
+        assert parsed["region"] == "us-central1"
+
+    def test_output_json_contains_url(self, tmp_path):
+        result = self._deploy_with_json_output(tmp_path)
+        parsed = _parse_json_from_output(result.output)
+        assert parsed["url"] == "https://test-agent-abc-uc.a.run.app"
+
+    def test_output_json_contains_deployed_at(self, tmp_path):
+        result = self._deploy_with_json_output(tmp_path)
+        parsed = _parse_json_from_output(result.output)
+        assert "deployed_at" in parsed
+        assert parsed["deployed_at"].endswith("Z")
+
+    def test_output_json_endpoints_contains_agent_url(self, tmp_path):
+        result = self._deploy_with_json_output(tmp_path)
+        parsed = _parse_json_from_output(result.output)
+        assert parsed["endpoints"]["agent"] == "https://test-agent-abc-uc.a.run.app"
+
+    def test_output_json_webhook_endpoints_present(self, tmp_path):
+        result = self._deploy_with_json_output(tmp_path, service_cfg={
+            "entry_point": "webhook",
+            "webhooks": [{"name": "jira", "path": "/webhooks/jira"}],
+        })
+        parsed = _parse_json_from_output(result.output)
+        assert "webhooks" in parsed["endpoints"]
+        assert parsed["endpoints"]["webhooks"] == [
+            "https://test-agent-abc-uc.a.run.app/webhooks/jira"
+        ]
+
+    def test_output_json_hitl_respond_present(self, tmp_path):
+        result = self._deploy_with_json_output(tmp_path, service_cfg={
+            "entry_point": "webhook",
+            "human_interaction": {"enabled": True},
+        })
+        parsed = _parse_json_from_output(result.output)
+        assert parsed["endpoints"]["hitl_respond"] == (
+            "https://test-agent-abc-uc.a.run.app/human/respond"
+        )
+
+    def test_output_json_custom_hitl_response_path(self, tmp_path):
+        result = self._deploy_with_json_output(tmp_path, service_cfg={
+            "entry_point": "webhook",
+            "human_interaction": {"enabled": True, "response_path": "/approvals"},
+        })
+        parsed = _parse_json_from_output(result.output)
+        assert parsed["endpoints"]["hitl_respond"].endswith("/approvals")
+
+    def test_output_json_no_webhooks_without_service_config(self, tmp_path):
+        result = self._deploy_with_json_output(tmp_path)
+        parsed = _parse_json_from_output(result.output)
+        assert "webhooks" not in parsed["endpoints"]
+        assert "hitl_respond" not in parsed["endpoints"]
+
+    def test_output_json_cloud_sql_instance_present(self, tmp_path):
+        import json
+        import yaml
+
+        manifest = {
+            "apiVersion": "zil/v1",
+            "kind": "Agent",
+            "metadata": {"name": "test-agent", "version": "0.1.0"},
+            "spec": {
+                "runtime": {"framework": "adk", "language": "python"},
+                "identity": "./identity",
+                "env": [{"name": "SESSION_DB_URI", "required": False, "secret": True}],
+            },
+        }
+        (tmp_path / "manifest.yaml").write_text(yaml.dump(manifest))
+        (tmp_path / "test_agent").mkdir()
+        (tmp_path / "test_agent" / "__init__.py").write_text("")
+
+        with patch("zil.commands.deploy.subprocess.call", return_value=0), \
+             patch("zil.commands.deploy.subprocess.run",
+                   return_value=MagicMock(returncode=0, stdout="my-project\n", stderr="")), \
+             patch("zil.commands.deploy.shutil.which", return_value="/usr/bin/gcloud"), \
+             patch("zil.commands.deploy.subprocess.check_output",
+                   return_value="https://test-agent-abc-uc.a.run.app\n"), \
+             patch.dict("os.environ", {
+                 "SESSION_DB_URI":
+                     "postgresql+pg8000://user:pass@/db?unix_sock=/cloudsql/my-project:us-central1:mydb/.s.PGSQL.5432"
+             }):
+            result = runner.invoke(
+                cli,
+                [
+                    "deploy", "--skip-evals",
+                    "--project-dir", str(tmp_path),
+                    "--project", "my-project",
+                    "--region", "us-central1",
+                    "--output", "json",
+                ],
+                catch_exceptions=False,
+            )
+
+        parsed = _parse_json_from_output(result.output)
+        assert parsed["cloud_sql_instance"] == "my-project:us-central1:mydb"
+
+    def test_output_text_no_json_in_stdout(self, tmp_path):
+        result = self._deploy_with_json_output(tmp_path)
+        parsed = _parse_json_from_output(result.output)
+        assert parsed  # non-empty dict
+
+    def test_output_help_shows_json_option(self):
+        result = runner.invoke(cli, ["deploy", "--help"])
+        assert "--output" in result.output
+        assert "json" in result.output
+
+
+class TestBuildDeployResult:
+    """Unit tests for _build_deploy_result and _fetch_service_url."""
+
+    def test_fetch_service_url_returns_url(self):
+        from zil.commands.deploy import _fetch_service_url
+        with patch("zil.commands.deploy.subprocess.check_output",
+                   return_value="https://my-svc-abc-uc.a.run.app\n"):
+            url = _fetch_service_url("my-svc", "proj", "us-central1")
+        assert url == "https://my-svc-abc-uc.a.run.app"
+
+    def test_fetch_service_url_returns_none_on_failure(self):
+        from zil.commands.deploy import _fetch_service_url
+        with patch("zil.commands.deploy.subprocess.check_output",
+                   side_effect=__import__("subprocess").CalledProcessError(1, "gcloud")):
+            url = _fetch_service_url("svc", "proj", "region")
+        assert url is None
+
+    def test_build_result_basic_fields(self):
+        from zil.commands.deploy import _build_deploy_result
+        manifest = {"spec": {"runtime": {}}}
+        with patch("zil.commands.deploy._fetch_service_url",
+                   return_value="https://svc.run.app"):
+            r = _build_deploy_result(manifest, "svc", "proj", "us-east1", None)
+        assert r["service"] == "svc"
+        assert r["project"] == "proj"
+        assert r["region"] == "us-east1"
+        assert r["url"] == "https://svc.run.app"
+        assert "cloud_sql_instance" not in r
+
+    def test_build_result_includes_cloud_sql(self):
+        from zil.commands.deploy import _build_deploy_result
+        manifest = {"spec": {"runtime": {}}}
+        with patch("zil.commands.deploy._fetch_service_url", return_value=None):
+            r = _build_deploy_result(manifest, "svc", "proj", "r", "proj:r:db")
+        assert r["cloud_sql_instance"] == "proj:r:db"
+
+    def test_build_result_webhook_endpoints(self):
+        from zil.commands.deploy import _build_deploy_result
+        manifest = {"spec": {"runtime": {"service": {
+            "entry_point": "webhook",
+            "webhooks": [{"name": "gh", "path": "/webhooks/gh"}],
+        }}}}
+        with patch("zil.commands.deploy._fetch_service_url",
+                   return_value="https://svc.run.app"):
+            r = _build_deploy_result(manifest, "svc", "proj", "r", None)
+        assert r["endpoints"]["webhooks"] == ["https://svc.run.app/webhooks/gh"]
+
+    def test_build_result_hitl_default_path(self):
+        from zil.commands.deploy import _build_deploy_result
+        manifest = {"spec": {"runtime": {"service": {
+            "human_interaction": {"enabled": True},
+        }}}}
+        with patch("zil.commands.deploy._fetch_service_url",
+                   return_value="https://svc.run.app"):
+            r = _build_deploy_result(manifest, "svc", "proj", "r", None)
+        assert r["endpoints"]["hitl_respond"] == "https://svc.run.app/human/respond"
+
+    def test_build_result_hitl_disabled_not_included(self):
+        from zil.commands.deploy import _build_deploy_result
+        manifest = {"spec": {"runtime": {"service": {
+            "human_interaction": {"enabled": False},
+        }}}}
+        with patch("zil.commands.deploy._fetch_service_url",
+                   return_value="https://svc.run.app"):
+            r = _build_deploy_result(manifest, "svc", "proj", "r", None)
+        assert "hitl_respond" not in r["endpoints"]
+
+    def test_build_result_url_none_gives_path_only_for_hitl(self):
+        from zil.commands.deploy import _build_deploy_result
+        manifest = {"spec": {"runtime": {"service": {
+            "human_interaction": {"enabled": True, "response_path": "/approvals"},
+        }}}}
+        with patch("zil.commands.deploy._fetch_service_url", return_value=None):
+            r = _build_deploy_result(manifest, "svc", "proj", "r", None)
+        assert r["endpoints"]["hitl_respond"] == "/approvals"
+
+
 class TestResolveGcpProject:
     def test_flag_takes_precedence(self):
         from zil.commands.deploy import _resolve_gcp_project

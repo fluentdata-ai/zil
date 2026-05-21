@@ -95,6 +95,8 @@ def validate_project(project_dir: Path) -> ValidationResult:
     _check_guardrails(project_dir, manifest, result)
     _check_cost(manifest, result)
     _check_tools(project_dir, manifest, result)
+    _check_agents(project_dir, manifest, result)
+    _check_service(manifest, result)
 
     return result
 
@@ -104,6 +106,12 @@ def _check_identity(project_dir: Path, manifest: dict, result: ValidationResult)
     spec = manifest.get("spec", {})
     identity_ref = spec.get("identity")
     if not identity_ref:
+        # Allow omitting root identity when sub-agents are declared
+        if spec.get("agents"):
+            return
+        result.checks.append(
+            CheckResult("warn", "spec.identity — not set (add identity path or spec.agents)")
+        )
         return
 
     identity_dir = project_dir / "identity"
@@ -580,3 +588,186 @@ def _check_env_refs(
                     f"references '${{{var_name}}}' but it is not declared in spec.env",
                 )
             )
+
+
+def _check_agents(project_dir: Path, manifest: dict, result: ValidationResult) -> None:
+    """Validate spec.agents sub-agent definitions."""
+    spec = manifest.get("spec", {})
+    agents = spec.get("agents")
+    if not agents:
+        return
+
+    # Collect declared MCP server names for cross-referencing
+    tools_cfg = spec.get("tools") or {}
+    if isinstance(tools_cfg, str):
+        tools_cfg = {}
+    declared_mcp_names: set[str] = {
+        s.get("name", "") for s in tools_cfg.get("mcp_servers", [])
+    }
+
+    # Collect declared env var names for model_env_var cross-referencing
+    env_declarations = spec.get("env", [])
+    declared_env_names: set[str] = {e.get("name") for e in env_declarations if e.get("name")}
+
+    agent_names: list[str] = []
+    for agent in agents:
+        name = agent.get("name", "<unnamed>")
+        agent_names.append(name)
+
+        # Check identity directory exists
+        identity_ref = agent.get("identity", "")
+        if identity_ref:
+            identity_dir = project_dir / identity_ref
+            if identity_dir.is_dir():
+                result.checks.append(
+                    CheckResult("pass", f"spec.agents[{name}].identity — directory present")
+                )
+                # Warn if instructions.md is missing (personas are optional)
+                if not (identity_dir / "instructions.md").is_file():
+                    result.checks.append(
+                        CheckResult(
+                            "warn",
+                            f"spec.agents[{name}].identity — instructions.md missing",
+                        )
+                    )
+            else:
+                result.checks.append(
+                    CheckResult(
+                        "fail",
+                        f"spec.agents[{name}].identity — directory '{identity_ref}' not found",
+                    )
+                )
+        else:
+            result.checks.append(
+                CheckResult("fail", f"spec.agents[{name}] — missing 'identity' field")
+            )
+
+        # Check MCP server name references resolve
+        mcp_names: list[str] = (agent.get("tools") or {}).get("mcp_servers") or []
+        for mcp_name in mcp_names:
+            if mcp_name not in declared_mcp_names:
+                result.checks.append(
+                    CheckResult(
+                        "warn",
+                        f"spec.agents[{name}].tools.mcp_servers — '{mcp_name}' "
+                        "not declared in spec.tools.mcp_servers",
+                    )
+                )
+
+        # Check model_env_var references declared spec.env entries
+        model_env_var = (agent.get("llm") or {}).get("model_env_var")
+        if model_env_var and model_env_var not in declared_env_names:
+            result.checks.append(
+                CheckResult(
+                    "warn",
+                    f"spec.agents[{name}].llm.model_env_var — '{model_env_var}' "
+                    "not declared in spec.env",
+                )
+            )
+
+    result.checks.append(
+        CheckResult(
+            "pass",
+            f"spec.agents — {len(agents)} sub-agent(s): {', '.join(agent_names)}",
+        )
+    )
+
+
+def _check_service(manifest: dict, result: ValidationResult) -> None:
+    """Validate spec.runtime.service (webhook + HITL) configuration."""
+    service = manifest.get("spec", {}).get("runtime", {}).get("service")
+    if not service:
+        return
+
+    entry_point = service.get("entry_point", "adk")
+
+    # Collect env var names for cross-referencing
+    env_declarations = manifest.get("spec", {}).get("env", [])
+    declared_env_names: set[str] = {e.get("name") for e in env_declarations if e.get("name")}
+
+    # --- Webhook source checks ---
+    webhooks = service.get("webhooks") or []
+    for wh in webhooks:
+        wh_name = wh.get("name", "<unnamed>")
+        secret_env = wh.get("secret_env")
+        if secret_env and secret_env not in declared_env_names:
+            result.checks.append(
+                CheckResult(
+                    "warn",
+                    f"spec.runtime.service.webhooks[{wh_name}].secret_env — "
+                    f"'{secret_env}' not declared in spec.env",
+                )
+            )
+
+    if webhooks:
+        wh_names = [w.get("name", "?") for w in webhooks]
+        result.checks.append(
+            CheckResult(
+                "pass",
+                f"spec.runtime.service — entry_point={entry_point}, "
+                f"{len(webhooks)} webhook(s): {', '.join(wh_names)}",
+            )
+        )
+
+    # --- HITL checks ---
+    hitl = service.get("human_interaction") or {}
+    if hitl.get("enabled"):
+        # Warn if HITL is enabled but SESSION_DB_URI is not declared
+        if "SESSION_DB_URI" not in declared_env_names:
+            result.checks.append(
+                CheckResult(
+                    "warn",
+                    "spec.runtime.service.human_interaction — HITL enabled but "
+                    "SESSION_DB_URI is not declared in spec.env "
+                    "(in-memory sessions lose pending requests on restart)",
+                )
+            )
+
+        # Validate notify.channel-specific required vars
+        notify = hitl.get("notify") or {}
+        channel = notify.get("channel")
+        if channel == "jira_comment":
+            issue_key_env = notify.get("issue_key_env")
+            if not issue_key_env:
+                result.checks.append(
+                    CheckResult(
+                        "fail",
+                        "spec.runtime.service.human_interaction.notify — "
+                        "channel=jira_comment requires issue_key_env",
+                    )
+                )
+            elif issue_key_env not in declared_env_names:
+                result.checks.append(
+                    CheckResult(
+                        "warn",
+                        f"spec.runtime.service.human_interaction.notify — "
+                        f"issue_key_env '{issue_key_env}' not declared in spec.env",
+                    )
+                )
+        elif channel in ("slack", "http_callback"):
+            url_env = notify.get("webhook_url_env")
+            if not url_env:
+                result.checks.append(
+                    CheckResult(
+                        "fail",
+                        f"spec.runtime.service.human_interaction.notify — "
+                        f"channel={channel} requires webhook_url_env",
+                    )
+                )
+            elif url_env not in declared_env_names:
+                result.checks.append(
+                    CheckResult(
+                        "warn",
+                        f"spec.runtime.service.human_interaction.notify — "
+                        f"webhook_url_env '{url_env}' not declared in spec.env",
+                    )
+                )
+
+        result.checks.append(
+            CheckResult(
+                "pass",
+                f"spec.runtime.service.human_interaction — enabled "
+                f"(timeout={hitl.get('timeout_seconds', 86400)}s, "
+                f"on_timeout={hitl.get('timeout_action', 'abort')})",
+            )
+        )

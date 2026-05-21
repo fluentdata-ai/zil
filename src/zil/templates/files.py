@@ -34,6 +34,12 @@ def _manifest(c: InitConfig) -> str:
     )
     env_vars = _manifest_env_vars(c)
     tools_block = _manifest_tools_block(c)
+    agents_block = _manifest_agents_block(c)
+    service_block = _manifest_service_block(c)
+    identity_line = (
+        '  identity: ./identity' if not c.agent_names
+        else '  # identity: ./identity  # omitted — sub-agents carry their own identities'
+    )
     return f"""\
 apiVersion: zil/v1
 kind: Agent
@@ -55,8 +61,8 @@ spec:
     resource_limits:
       max_tokens_per_request: 8192
       max_duration_seconds: 120
-  identity: ./identity
-{evals_line}
+{service_block}{identity_line}
+{agents_block}{evals_line}
 {obs_line}
   # cost:
   #   max_tokens_per_request: 8192
@@ -146,6 +152,47 @@ def _manifest_tools_block(c: InitConfig) -> str:
         args: ["my-mcp-server"]
         tool_filter: []
     host_dependencies: []"""
+
+
+def _manifest_agents_block(c: InitConfig) -> str:
+    """Generate the spec.agents block for a multi-agent manifest."""
+    if not c.agent_names:
+        return ""
+    lines = ["  agents:"]
+    for agent in c.agent_names:
+        agent_id = agent.replace("-", "_")
+        lines += [
+            f"    - name: {agent_id}",
+            f"      role: sub-agent",
+            f"      identity: ./agents/{agent_id}/identity",
+            f"      description: {agent_id} sub-agent",
+            f"      llm:",
+            f"        model_env_var: AGENT_{agent_id.upper()}_MODEL",
+            f"      # tools:",
+            f"      #   mcp_servers: []  # reference names from spec.tools.mcp_servers",
+        ]
+    return "\n".join(lines) + "\n"
+
+
+def _manifest_service_block(c: InitConfig) -> str:
+    """Generate the spec.runtime.service block when webhook mode is requested."""
+    if c.service_mode != "webhook":
+        return ""
+    return """\
+    service:
+      entry_point: webhook
+      webhooks:
+        - name: inbound
+          path: /webhooks/inbound
+          # signature_header: X-Hub-Signature-256
+          # algorithm: sha256
+          # secret_env: WEBHOOK_SECRET
+      # human_interaction:
+      #   enabled: true
+      #   response_path: /human/respond
+      #   timeout_seconds: 86400
+      #   timeout_action: abort
+"""
 
 
 def _host_deps_for_preset(preset: str | None) -> list[str]:
@@ -735,3 +782,251 @@ GOOGLE_CLOUD_LOCATION=us-central1
 # Observability — set to export traces (used by zil run --trace)
 # OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces
 """
+
+
+# ---------------------------------------------------------------------------
+# Multi-agent: agents/{name}/identity/ scaffold (conditional on --agents)
+# ---------------------------------------------------------------------------
+
+def _sub_agent_identity_files(c: InitConfig) -> list[tuple[str, str]]:
+    """Return (path, content) pairs for all sub-agent identity files."""
+    files: list[tuple[str, str]] = []
+    for agent in c.agent_names:
+        agent_id = agent.replace("-", "_")
+        base = f"agents/{agent_id}/identity"
+        files.append((
+            f"{base}/persona.md",
+            f"# {agent_id} — Persona\n\nYou are **{agent_id}**, a sub-agent of {c.name}.\n",
+        ))
+        files.append((
+            f"{base}/instructions.md",
+            f"# {agent_id} — Instructions\n\n1. Complete your assigned task accurately.\n"
+            f"2. Report results clearly to the root agent.\n",
+        ))
+    return files
+
+
+# Register sub-agent identity files dynamically (skipped if no --agents flag)
+@_register(lambda c: f"agents/__placeholder__" if not c.agent_names else "__multi_agent_skip__")
+def _multi_agent_placeholder(c: InitConfig) -> str:
+    return ""
+
+
+def _render_extra_files(project_dir: "Path", c: InitConfig) -> None:
+    """Render additional files that can't be expressed as simple path templates."""
+    # Sub-agent identity directories
+    for rel_path, content in _sub_agent_identity_files(c):
+        target = project_dir / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+
+    # Webhook scaffold files
+    if c.service_mode == "webhook":
+        _render_webhook_files(project_dir, c)
+
+
+def _render_webhook_files(project_dir: "Path", c: InitConfig) -> None:
+    """Render app.py and runner.py into the module directory."""
+    module_dir = project_dir / c.module_name
+    module_dir.mkdir(parents=True, exist_ok=True)
+
+    app_py = module_dir / "app.py"
+    app_py.write_text(_webhook_app_py(c), encoding="utf-8")
+
+    runner_py = module_dir / "runner.py"
+    runner_py.write_text(_webhook_runner_py(c), encoding="utf-8")
+
+
+def _webhook_app_py(c: InitConfig) -> str:
+    return f'''\
+"""
+{c.name} — FastAPI webhook entry point.
+
+Inbound webhooks trigger the agent; /human/respond resumes HITL sessions.
+Run locally:  uvicorn {c.module_name}.app:app --reload --port 8080
+"""
+
+from __future__ import annotations
+
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Request, Response
+from pydantic import BaseModel
+
+from {c.module_name}.runner import AgentRunner
+
+
+_runner: AgentRunner | None = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _runner
+    session_uri = os.environ.get(
+        "SESSION_DB_URI", "sqlite+aiosqlite:///./sessions.db"
+    )
+    _runner = AgentRunner(session_uri=session_uri)
+    yield
+    _runner = None
+
+
+app = FastAPI(title="{c.name}", lifespan=lifespan)
+
+
+# ---------------------------------------------------------------------------
+# Health check
+# ---------------------------------------------------------------------------
+
+
+@app.get("/health")
+async def health() -> dict:
+    return {{"status": "ok"}}
+
+
+# ---------------------------------------------------------------------------
+# Inbound webhook — triggers the agent
+# ---------------------------------------------------------------------------
+
+
+@app.post("/webhooks/{{name}}")
+async def receive_webhook(name: str, request: Request) -> dict:
+    """Accept an inbound webhook and dispatch to the agent."""
+    if _runner is None:
+        raise HTTPException(503, "Agent not ready")
+    payload = await request.json()
+    session_id = await _runner.dispatch(webhook_name=name, payload=payload)
+    return {{"status": "accepted", "session_id": session_id}}
+
+
+# ---------------------------------------------------------------------------
+# Human-in-the-loop response endpoint
+# ---------------------------------------------------------------------------
+
+
+class HumanResponse(BaseModel):
+    session_id: str
+    interaction_id: str
+    choice: str = ""
+    comment: str = ""
+
+
+@app.post("/human/respond")
+async def human_respond(body: HumanResponse) -> dict:
+    """Receive a human\'s response and resume the waiting agent session."""
+    if _runner is None:
+        raise HTTPException(503, "Agent not ready")
+    await _runner.resume(
+        session_id=body.session_id,
+        interaction_id=body.interaction_id,
+        choice=body.choice,
+        comment=body.comment,
+    )
+    return {{"status": "resumed"}}
+'''
+
+
+def _webhook_runner_py(c: InitConfig) -> str:
+    return f'''\
+"""
+{c.name} — Agent session manager and resume handler.
+
+Wraps ADK DatabaseSessionService for durable sessions.
+SESSION_DB_URI determines the backend:
+  sqlite+aiosqlite:///./sessions.db   — local dev
+  postgresql+pg8000://...              — Cloud Run + Cloud SQL
+"""
+
+from __future__ import annotations
+
+import uuid
+from pathlib import Path
+from typing import Any
+
+
+class AgentRunner:
+    """Manages agent sessions and dispatches webhook events."""
+
+    def __init__(self, session_uri: str) -> None:
+        self.session_uri = session_uri
+        self._app = self._load_agent()
+        self._session_svc = self._build_session_service(session_uri)
+
+    def _load_agent(self) -> Any:
+        from {c.module_name}.agent import root_agent
+        return root_agent
+
+    def _build_session_service(self, uri: str) -> Any:
+        try:
+            from google.adk.sessions.database_session_service import DatabaseSessionService
+            return DatabaseSessionService(db_url=uri)
+        except ImportError:
+            from google.adk.sessions import InMemorySessionService
+            return InMemorySessionService()
+
+    async def dispatch(self, *, webhook_name: str, payload: dict[str, Any]) -> str:
+        """Create a new session and run the agent with the webhook payload."""
+        from google.adk.runners import Runner
+
+        session_id = str(uuid.uuid4())
+        runner = Runner(app=self._app, session_service=self._session_svc)
+        # Run in background — do not await the full turn here
+        # (long-running tasks or HITL will checkpoint and return)
+        import asyncio
+        asyncio.create_task(
+            self._run_turn(runner, session_id, payload)
+        )
+        return session_id
+
+    async def _run_turn(
+        self,
+        runner: Any,
+        session_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        from google.genai.types import Content, Part
+        message = Content(
+            role="user",
+            parts=[Part(text=str(payload))],
+        )
+        async for _event in runner.run_async(
+            user_id="webhook",
+            session_id=session_id,
+            new_message=message,
+        ):
+            pass
+
+    async def resume(
+        self,
+        *,
+        session_id: str,
+        interaction_id: str,
+        choice: str,
+        comment: str,
+    ) -> None:
+        """Resume a session that was paused for human input."""
+        from google.adk.runners import Runner
+        from google.genai.types import Content, Part
+
+        runner = Runner(app=self._app, session_service=self._session_svc)
+        state_delta = {{
+            "human_response": {{
+                "interaction_id": interaction_id,
+                "choice": choice,
+                "comment": comment,
+            }},
+            "pending_human_request": None,
+        }}
+        message = Content(
+            role="user",
+            parts=[Part(text=f"Human responded: {{choice}} {{comment}}")],
+        )
+        async for _event in runner.run_async(
+            user_id="webhook",
+            session_id=session_id,
+            new_message=message,
+            state_delta=state_delta,
+        ):
+            pass
+'''

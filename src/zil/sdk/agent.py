@@ -193,6 +193,15 @@ def create_agent(
 
     all_tools: list[Any] = list(tools or []) + mcp_toolsets
 
+    # Build sub-agents from spec.agents and attach as AgentTool instances
+    if ctx.agents:
+        agent_tools = _build_sub_agents(ctx, enable_mcp=enable_mcp)
+        all_tools = all_tools + agent_tools
+        logger.info(
+            "Multi-agent wiring: %d sub-agent(s) attached",
+            len(agent_tools),
+        )
+
     agent = LlmAgent(
         model=resolved_model,
         name=resolved_name,
@@ -210,3 +219,74 @@ def create_agent(
     agent._zil_cost = cost_callback  # type: ignore[attr-defined]
 
     return agent
+
+
+def _build_sub_agents(ctx: Any, *, enable_mcp: bool = True) -> list[Any]:
+    """Build sub-agent LlmAgents wrapped as AgentTool from spec.agents.
+
+    Each sub-agent gets its own identity, model, and (optionally) a filtered
+    subset of MCP toolsets from the root spec.tools.mcp_servers.
+    """
+    try:
+        from google.adk.agents import LlmAgent
+        from google.adk.tools.agent_tool import AgentTool
+    except ImportError:
+        raise ImportError(
+            "google-adk is required for multi-agent support. "
+            "Install it with: pip install 'zil-ai[adk]'"
+        ) from None
+
+    # Build a name → server config index for MCP filtering
+    all_mcp_servers: list[Any] = []
+    if enable_mcp and ctx.tools_config:
+        all_mcp_servers = ctx.tools_config.get("mcp_servers", [])
+    mcp_by_name: dict[str, Any] = {s["name"]: s for s in all_mcp_servers}
+
+    agent_tools: list[Any] = []
+    for spec in ctx.agents:
+        # Resolve model: model_env_var override → adapter model
+        sub_model = resolve_model(spec.llm_adapter)
+        if spec.model_env_var:
+            import os
+            env_override = os.environ.get(spec.model_env_var)
+            if env_override:
+                sub_model = env_override
+
+        # Compose instruction from sub-agent identity
+        from zil.sdk.identity import compose_instruction
+        sub_instruction = compose_instruction(
+            persona=spec.identity.persona,
+            instructions=spec.identity.instructions,
+            guardrails=spec.identity.guardrails,
+        )
+
+        # Filter MCP toolsets to those listed in spec.agents[].tools.mcp_servers
+        sub_mcp_toolsets: list[Any] = []
+        if enable_mcp and spec.mcp_server_names:
+            from zil.sdk.mcp import create_mcp_toolsets_adk
+
+            filtered_servers = [
+                mcp_by_name[n] for n in spec.mcp_server_names if n in mcp_by_name
+            ]
+            if filtered_servers:
+                sub_mcp_toolsets = create_mcp_toolsets_adk(
+                    filtered_servers, project_dir=ctx.project_dir
+                )
+
+        sub_agent = LlmAgent(
+            model=sub_model,
+            name=spec.name,
+            description=spec.description,
+            instruction=sub_instruction,
+            tools=sub_mcp_toolsets,
+        )
+
+        agent_tools.append(AgentTool(agent=sub_agent))
+        logger.info(
+            "Sub-agent %r built (model=%s, mcp=%d server(s))",
+            spec.name,
+            sub_model,
+            len(sub_mcp_toolsets),
+        )
+
+    return agent_tools
