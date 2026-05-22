@@ -5,7 +5,7 @@ import os
 import re
 import shutil
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -338,7 +338,7 @@ def _build_deploy_result(
         "region": region,
         "url": url,
         "endpoints": endpoints,
-        "deployed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "deployed_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     if cloud_sql_instance:
         result["cloud_sql_instance"] = cloud_sql_instance

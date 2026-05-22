@@ -5,6 +5,28 @@ All notable changes to the `zil-ai` package are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.16](https://github.com/fluentdata-co/zil/compare/v0.1.15...v0.1.16) — 2026-05-22
+
+### Added
+
+- **`spec.runtime.dependencies`** — new manifest section for declarative non-Python runtime dependencies. Supports types: `apt`, `apt-nodesource` (Node.js via NodeSource), `apt-gh` (GitHub CLI via official repo), `npm-global` (global npm packages), and `pip`. Zil generates ordered `RUN` stanzas in the Dockerfile with correct installation order (apt → nodesource → gh → pip → npm-global).
+- **Dockerfile auto-regeneration on `zil web --docker`** — regenerates the `Dockerfile` from `manifest.yaml` before `docker build`, ensuring `spec.runtime.dependencies` and `spec.tools.host_dependencies` are always reflected in the container without a static `Dockerfile`.
+- **`ProjectContext.runtime_deps`** — new SDK context field exposing parsed `spec.runtime.dependencies` entries.
+- **`zil validate` runtime dep checks** — warns on unknown dependency types and on `npm-global` entries declared without a preceding `apt-nodesource` (Node.js) entry.
+- **Skills convention** — `spec.skills` for per-agent skill allowlists; skills live under `skills/` and are discoverable at runtime. `zil init --skills` scaffolds skill stubs.
+
+## [0.1.15](https://github.com/fluentdata-co/zil/compare/v0.1.14...v0.1.15) — 2026-05-21
+
+### Added
+
+- **Cloud SQL auto-wiring** — `zil deploy` auto-detects the Cloud SQL instance from `SESSION_DB_URI` and attaches it via `--add-cloudsql-instances`, eliminating the need to pass it manually.
+- **`zil deploy --output json`** — machine-readable deploy result with service URL, webhook endpoints, HITL endpoint, and Cloud SQL instance. Suitable for CI pipelines.
+- **Multi-agent scaffolding (`zil init --agents`)** — scaffold multi-agent projects with per-agent identity directories, MCP server assignments, and a root orchestrator wired to sub-agents.
+- **Webhook service scaffolding (`zil init --service webhook`)** — generates `app.py` (FastAPI) and `runner.py` for webhook-driven agents with HITL support.
+- **HITL (Human-in-the-Loop) SDK** — `zil.sdk.hitl` module with `request_human_input` / `resolve_human_input` for pausing agent execution and resuming on human callback.
+- **Multi-agent schema validation** — `zil validate` checks `spec.agents` entries: identity directories, LLM model references, and MCP server name references.
+- **`spec.agents` manifest section** — declare sub-agents with name, role, identity, description, LLM config, and tool assignments.
+
 ## [0.1.14](https://github.com/fluentdata-co/zil/compare/v0.1.13...v0.1.14) — 2026-05-20
 
 ### Added

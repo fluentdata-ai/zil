@@ -103,6 +103,7 @@ def _regenerate_dockerfile(project_dir: Path, agent_name: str) -> None:
     The project's static Dockerfile (if any) is overwritten.
     """
     import yaml
+
     from zil.packaging.dockerfile import (
         generate_dockerfile,
         has_tools_dir,

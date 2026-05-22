@@ -166,13 +166,13 @@ def _manifest_agents_block(c: InitConfig) -> str:
         agent_id = agent.replace("-", "_")
         lines += [
             f"    - name: {agent_id}",
-            f"      role: sub-agent",
+            "      role: sub-agent",
             f"      identity: ./agents/{agent_id}/identity",
             f"      description: {agent_id} sub-agent",
-            f"      llm:",
+            "      llm:",
             f"        model_env_var: AGENT_{agent_id.upper()}_MODEL",
-            f"      # tools:",
-            f"      #   mcp_servers: []  # reference names from spec.tools.mcp_servers",
+            "      # tools:",
+            "      #   mcp_servers: []  # reference names from spec.tools.mcp_servers",
         ]
         if skill_names:
             lines.append(f"      #   skills: []  # reference names from spec.skills (e.g. {', '.join(skill_names)})")
@@ -812,12 +812,12 @@ def _sub_agent_identity_files(c: InitConfig) -> list[tuple[str, str]]:
 
 
 # Register sub-agent identity files dynamically (skipped if no --agents flag)
-@_register(lambda c: f"agents/__placeholder__" if not c.agent_names else "__multi_agent_skip__")
+@_register(lambda c: "agents/__placeholder__" if not c.agent_names else "__multi_agent_skip__")
 def _multi_agent_placeholder(c: InitConfig) -> str:
     return ""
 
 
-def _render_extra_files(project_dir: "Path", c: InitConfig) -> None:
+def _render_extra_files(project_dir: Path, c: InitConfig) -> None:
     """Render additional files that can't be expressed as simple path templates."""
     # Sub-agent identity directories
     for rel_path, content in _sub_agent_identity_files(c):
@@ -835,7 +835,7 @@ def _render_extra_files(project_dir: "Path", c: InitConfig) -> None:
         _render_skill_files(project_dir, c)
 
 
-def _render_webhook_files(project_dir: "Path", c: InitConfig) -> None:
+def _render_webhook_files(project_dir: Path, c: InitConfig) -> None:
     """Render app.py and runner.py into the module directory."""
     module_dir = project_dir / c.module_name
     module_dir.mkdir(parents=True, exist_ok=True)
@@ -1042,9 +1042,8 @@ class AgentRunner:
 '''
 
 
-def _render_skill_files(project_dir: "Path", c: "InitConfig") -> None:
+def _render_skill_files(project_dir: Path, c: InitConfig) -> None:
     """Render a stub SKILL.md for each named skill into skills/<name>/SKILL.md."""
-    from pathlib import Path
 
     skill_names: list[str] = getattr(c, 'skill_names', []) or []
     if not skill_names:
