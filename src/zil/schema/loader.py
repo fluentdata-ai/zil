@@ -95,6 +95,7 @@ def validate_project(project_dir: Path) -> ValidationResult:
     _check_guardrails(project_dir, manifest, result)
     _check_cost(manifest, result)
     _check_tools(project_dir, manifest, result)
+    _check_runtime_deps(manifest, result)
     _check_skills(project_dir, manifest, result)
     _check_agents(project_dir, manifest, result)
     _check_service(manifest, result)
@@ -532,7 +533,9 @@ def _check_tools(project_dir: Path, manifest: dict, result: ValidationResult) ->
                     )
                 )
 
-            # Cross-reference ${VAR} in args and env
+            # Cross-reference ${VAR} in command, args and env
+            if server.get("command"):
+                _check_env_refs(server["command"], name, "command", declared_env_names, result)
             for arg in server.get("args", []):
                 _check_env_refs(arg, name, "args", declared_env_names, result)
             for val in server.get("env", {}).values():
@@ -567,6 +570,44 @@ def _check_tools(project_dir: Path, manifest: dict, result: ValidationResult) ->
                 f"spec.tools.host_dependencies — {len(host_deps)} declared: {', '.join(host_deps)}",
             )
         )
+
+
+def _check_runtime_deps(manifest: dict, result: ValidationResult) -> None:
+    """Validate spec.runtime.dependencies entries."""
+    VALID_TYPES = {"apt", "apt-nodesource", "apt-gh", "npm-global", "pip"}
+    deps = manifest.get("spec", {}).get("runtime", {}).get("dependencies", [])
+    if not deps:
+        return
+
+    has_nodejs = any(d.get("type") in ("apt-nodesource",) for d in deps)
+    npm_global_names = [d.get("name", "") for d in deps if d.get("type") == "npm-global"]
+    unknown_types = [d.get("type") for d in deps if d.get("type") not in VALID_TYPES]
+
+    if unknown_types:
+        result.checks.append(
+            CheckResult(
+                "warn",
+                f"spec.runtime.dependencies — unknown type(s): {', '.join(set(unknown_types))}. "
+                f"Valid types: {', '.join(sorted(VALID_TYPES))}",
+            )
+        )
+
+    if npm_global_names and not has_nodejs:
+        result.checks.append(
+            CheckResult(
+                "warn",
+                f"spec.runtime.dependencies — npm-global packages {npm_global_names} declared "
+                "but no apt-nodesource entry found; Node.js must be installed first",
+            )
+        )
+
+    names = [d.get("name", "?") for d in deps]
+    result.checks.append(
+        CheckResult(
+            "pass",
+            f"spec.runtime.dependencies — {len(deps)} declared: {', '.join(names)}",
+        )
+    )
 
 
 def _check_env_refs(

@@ -46,6 +46,7 @@ class ProjectContext:
         agents: list[AgentSpec] | None = None,
         service_config: dict[str, Any] | None = None,
         skills_dir: Path | None = None,
+        runtime_deps: list[dict[str, Any]] | None = None,
     ) -> None:
         self.project_dir = project_dir
         self.manifest = manifest
@@ -58,6 +59,7 @@ class ProjectContext:
         self.agents: list[AgentSpec] = agents or []
         self.service_config = service_config
         self.skills_dir: Path | None = skills_dir
+        self.runtime_deps: list[dict[str, Any]] = runtime_deps or []
 
     @property
     def name(self) -> str:
@@ -124,6 +126,7 @@ def load_project(project_dir: Path | None = None) -> ProjectContext:
 
     env_declarations = manifest.get("spec", {}).get("env", [])
     cost_config = manifest.get("spec", {}).get("cost")
+    runtime_deps = manifest.get("spec", {}).get("runtime", {}).get("dependencies", [])
 
     return ProjectContext(
         project_dir=root,
@@ -137,6 +140,7 @@ def load_project(project_dir: Path | None = None) -> ProjectContext:
         agents=agents,
         service_config=service_config,
         skills_dir=skills_dir,
+        runtime_deps=runtime_deps,
     )
 
 

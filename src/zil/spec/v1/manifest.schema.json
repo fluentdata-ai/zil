@@ -303,6 +303,34 @@
         "service": {
           "$ref": "#/$defs/serviceConfig",
           "description": "HTTP service configuration (webhook entry-point and HITL)."
+        },
+        "dependencies": {
+          "type": "array",
+          "description": "Non-Python runtime dependencies installed in the container (e.g. Node.js, pnpm, gh CLI).",
+          "items": {
+            "$ref": "#/$defs/runtimeDependency"
+          }
+        }
+      }
+    },
+    "runtimeDependency": {
+      "type": "object",
+      "required": ["name", "type"],
+      "additionalProperties": false,
+      "description": "A single non-Python runtime dependency to install in the container.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Package or tool name (e.g. pnpm, gh, nodejs)."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["apt", "apt-nodesource", "apt-gh", "npm-global", "pip"],
+          "description": "Install mechanism: apt=apt-get, apt-nodesource=NodeSource script, apt-gh=GitHub CLI repo, npm-global=npm install -g, pip=pip install."
+        },
+        "version": {
+          "type": "string",
+          "description": "Version pin (e.g. '20' for nodejs, '9.x' for pnpm, '1.2.3' for pip packages). Omit for latest."
         }
       }
     },

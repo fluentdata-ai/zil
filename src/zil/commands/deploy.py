@@ -221,6 +221,7 @@ def _deploy_with_mcp_deps(
     host_deps: list[str],
     module_dir: str,
     cloud_sql_instance: str | None = None,
+    runtime_deps: list[dict] | None = None,
 ) -> int:
     """Deploy with a custom Dockerfile that installs host dependencies."""
     import importlib.metadata
@@ -237,6 +238,7 @@ def _deploy_with_mcp_deps(
         module_dir=module_dir,
         adk_version=adk_version,
         host_deps=host_deps,
+        runtime_deps=runtime_deps or [],
         with_ui=with_ui,
         trace=trace,
     )
@@ -419,6 +421,7 @@ def _deploy_cloud_run(
         for srv in tools_cfg.get("mcp_servers", []):
             if srv.get("source"):
                 has_mcp_source = True
+    runtime_deps: list[dict] = manifest.get("spec", {}).get("runtime", {}).get("dependencies", [])
 
     # Resolve Cloud SQL instance from SESSION_DB_URI (used in both deploy paths)
     cloud_sql_instance: str | None = None
@@ -430,13 +433,14 @@ def _deploy_cloud_run(
         if m:
             cloud_sql_instance = m.group(1)
 
-    if host_deps or has_mcp_source:
+    if host_deps or has_mcp_source or runtime_deps:
         # Use custom deploy path that injects host deps into Dockerfile
         result = _deploy_with_mcp_deps(
             module_path, project, region, service_name,
             trace, with_ui, env_vars, allow_unauthenticated,
             host_deps, module_dir,
             cloud_sql_instance=cloud_sql_instance,
+            runtime_deps=runtime_deps,
         )
     else:
         if not shutil.which("adk"):

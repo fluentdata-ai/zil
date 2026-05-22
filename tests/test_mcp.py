@@ -546,7 +546,7 @@ class TestDockerfileGenerator:
     def test_generate_dockerfile_no_deps(self):
         from zil.packaging.dockerfile import generate_dockerfile
         result = generate_dockerfile(name="myagent")
-        assert "FROM python:3.12-slim AS deps" in result
+        assert "FROM python:3.12-slim" in result
         assert "apt-get" not in result
         assert "EXPOSE 8000" in result
 

@@ -89,7 +89,7 @@ def create_mcp_toolsets_adk(
         timeout = server.get("timeout", 10)
 
         if transport == "stdio":
-            command = server.get("command")
+            command = _resolve_env_refs(server.get("command", ""))
             if not command:
                 logger.warning(
                     "MCP server %r has transport=stdio but no command — skipping",
