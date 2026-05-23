@@ -73,13 +73,21 @@ my-agent/
 ├── my_agent/              # ADK agent module
 │   ├── __init__.py
 │   ├── agent.py           # Agent entry point
+│   ├── app.py             # (webhook) FastAPI entry point
+│   ├── runner.py          # (webhook) Execution runner
 │   └── .env.example       # API key template
+├── agents/                # Sub-agent identity directories (multi-agent)
+│   ├── vta/identity/
+│   └── vtd/identity/
+├── skills/                # Reusable agent skills (SKILL.md files)
+│   ├── fd-explore-repo/
+│   └── fd-submit-changes/
 ├── tools/                 # MCP server sources (bundled at pack/deploy)
 │   └── my-server/
 ├── adapters/              # LLM and embedding configuration
 │   ├── llm.yaml
 │   └── embed.yaml
-├── identity/              # Agent persona, instructions, guardrails
+├── identity/              # Root agent persona, instructions, guardrails
 │   ├── persona.md
 │   ├── instructions.md
 │   └── guardrails.yaml
@@ -88,7 +96,7 @@ my-agent/
 │   └── cases/
 ├── observability/         # OpenTelemetry configuration
 │   └── config.yaml
-├── Dockerfile             # Container build
+├── Dockerfile             # Container build (auto-generated)
 └── .github/workflows/     # CI/CD pipeline
 ```
 
@@ -110,6 +118,9 @@ my-agent/
 - [Getting Started](/getting-started) — full walkthrough from install to deployed agent
 - [SDK Reference](/sdk) — `zil.create_agent()` API documentation
 - [CLI Reference](/cli) — detailed command documentation
+- [Multi-Agent & HITL](/multi-agent) — orchestrate sub-agents with human-in-the-loop approval
+- [Skills](/skills) — reusable, discoverable agent procedures
+- [Runtime Dependencies](/runtime-deps) — declare non-Python dependencies in the manifest
 - [MCP Tools](/tools) — bundle and deploy MCP servers alongside your agent
 - [Cost Tracking](/cost) — token-based usage metering and budget enforcement
 - [Archive Signing](/signing) — cosign-based tamper evidence and provenance

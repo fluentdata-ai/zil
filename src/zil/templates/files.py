@@ -6,6 +6,8 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from zil.commands.init import InitConfig
 
 
@@ -175,7 +177,8 @@ def _manifest_agents_block(c: InitConfig) -> str:
             "      #   mcp_servers: []  # reference names from spec.tools.mcp_servers",
         ]
         if skill_names:
-            lines.append(f"      #   skills: []  # reference names from spec.skills (e.g. {', '.join(skill_names)})")
+            hint = ', '.join(skill_names)
+            lines.append(f"      #   skills: []  # from spec.skills (e.g. {hint})")
     return "\n".join(lines) + "\n"
 
 

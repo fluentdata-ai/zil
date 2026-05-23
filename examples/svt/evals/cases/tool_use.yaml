@@ -1,0 +1,7 @@
+# Tool use eval cases
+name: tool_use
+cases:
+  - input: "Look up order #12345"
+    expected_tool: lookup_order
+    expected_contains:
+      - "order"

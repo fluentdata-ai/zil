@@ -1,0 +1,14 @@
+# Eval suite for svt
+# Docs: https://getzil.dev/docs/evals
+eval_suite:
+  name: baseline
+  pass_threshold: 0.85
+  metrics:
+    - answer_relevancy
+  cases:
+    - file: ./cases/accuracy.yaml
+      weight: 0.5
+    - file: ./cases/tool_use.yaml
+      weight: 0.3
+    - file: ./cases/escalation.yaml
+      weight: 0.2

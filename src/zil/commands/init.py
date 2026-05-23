@@ -45,7 +45,7 @@ SERVICE_MODES = ["none", "webhook"]
     "skill_names",
     type=str,
     default=None,
-    help="Comma-separated skill names to scaffold in skills/ (e.g. fd-submit-changes,fd-run-tests).",
+    help="Comma-separated skill names to scaffold (e.g. fd-submit-changes,fd-run-tests).",
 )
 @click.option(
     "--service",

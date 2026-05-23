@@ -19,22 +19,27 @@ This returns a fully-configured [`google.adk.agents.LlmAgent`](https://adk.dev/a
 - **Guardrail engine** loaded from `identity/guardrails.yaml` → attached as `agent._zil_guardrails`
 - **Cost tracking** initialized from `spec.cost` → accessible via `zil.cost` and `agent._zil_cost`
 - **Environment config** populated via `zil.config` from `spec.env` declarations
+- **Sub-agents** built from `spec.agents` — each with their own identity, model, MCP servers, and skills
+- **Runtime dependencies** parsed from `spec.runtime.dependencies` → accessible via `ProjectContext.runtime_deps`
 
 ## How it works
 
 ```
 manifest.yaml
-├── metadata.name        →  agent name
-├── metadata.description →  agent description
+├── metadata.name           →  agent name
+├── metadata.description    →  agent description
 ├── spec.runtime.llm.adapter
 │   └── adapters/llm.yaml
-│       ├── provider     →  model prefix (e.g. "anthropic/")
-│       └── model        →  model id (e.g. "claude-sonnet-4-20250514")
-└── spec.identity
-    └── identity/
-        ├── persona.md       →  ┐
-        ├── instructions.md  →  ├→  composed instruction string
-        └── guardrails.yaml  →  ┘
+│       ├── provider        →  model prefix (e.g. "anthropic/")
+│       └── model           →  model id (e.g. "claude-sonnet-4-20250514")
+├── spec.runtime.dependencies  →  ProjectContext.runtime_deps
+├── spec.identity
+│   └── identity/
+│       ├── persona.md      →  ┐
+│       ├── instructions.md →  ├→  composed instruction string
+│       └── guardrails.yaml →  ┘
+├── spec.agents             →  sub-agent LlmAgents (AgentTool)
+└── spec.skills             →  SkillToolset (filtered per sub-agent)
 ```
 
 ## Parameters
@@ -151,3 +156,102 @@ root_agent = zil.create_agent(
 The `root_agent` module-level variable is the ADK convention for agent discovery. The agent lives inside a Python package (`my_agent/`) so that both `zil run` and `adk run my_agent` can discover it.
 
 > **Note:** Zil manifests use kebab-case names (e.g., `my-agent`), but the module directory uses snake_case (`my_agent`) to be a valid Python package. The SDK handles this conversion automatically.
+
+---
+
+## Multi-agent support
+
+When `spec.agents` is declared in the manifest, `create_agent()` automatically builds sub-agents and attaches them as `AgentTool` instances on the root agent.
+
+Each sub-agent gets:
+- Its own identity (persona, instructions, guardrails) from its identity directory
+- Its own model (resolved from `llm.model` / `model_env_var` or the root adapter)
+- A filtered subset of MCP servers from `spec.tools.mcp_servers`
+- A filtered `SkillToolset` from the `skills/` directory
+
+```python
+import zil
+
+# Sub-agents are automatically added as tools
+root_agent = zil.create_agent(
+    tools=[my_custom_tool],
+)
+# root_agent.tools includes: [my_custom_tool, AgentTool(vta), AgentTool(vtd)]
+```
+
+See [Multi-Agent & HITL](/multi-agent) for the full manifest schema and advanced usage.
+
+---
+
+## HITL SDK
+
+The `zil.sdk.hitl` module provides primitives for pausing agent execution and waiting for human input:
+
+```python
+from zil.sdk.hitl import request_human_input, HumanInputRequest
+
+async def approve_plan(plan: str, tool_context) -> str:
+    request = HumanInputRequest(
+        question="Please review this plan.",
+        context={"plan": plan},
+        options=["approve", "reject", "modify"],
+    )
+    response = await request_human_input(request, tool_context)
+
+    if response.choice == "__pending__":
+        return "Waiting for human approval."
+    return f"Human responded: {response.choice}"
+```
+
+See [Multi-Agent & HITL — HITL](/multi-agent#human-in-the-loop-hitl) for the complete API reference.
+
+---
+
+## Skills
+
+When `spec.skills` is set in the manifest, the SDK discovers skill definitions from the `skills/` directory and makes them available via ADK's `SkillToolset`:
+
+```python
+# Skills are loaded and attached automatically
+root_agent = zil.create_agent(tools=[...])
+```
+
+In multi-agent projects, skills are filtered per sub-agent based on `spec.agents[].tools.skills`. See [Skills](/skills) for the full guide.
+
+---
+
+## `ProjectContext`
+
+The SDK's internal `ProjectContext` holds all resolved project configuration. Access it directly for advanced use cases:
+
+```python
+from zil.sdk.loader import load_project
+
+ctx = load_project()
+
+# Core fields
+ctx.project_dir        # Path — project root
+ctx.manifest           # dict — raw manifest.yaml
+ctx.identity           # IdentityContext — persona, instructions, guardrails
+ctx.llm_adapter        # dict — resolved LLM adapter config
+ctx.observability      # dict | None — observability/config.yaml
+ctx.env_declarations   # list[dict] — spec.env entries
+ctx.cost_config        # dict | None — spec.cost
+ctx.tools_config       # dict | None — spec.tools (MCP servers, host deps)
+ctx.agents             # list[AgentSpec] — spec.agents entries
+ctx.service_config     # dict | None — spec.runtime.service
+ctx.skills_dir         # Path | None — resolved spec.skills directory
+ctx.runtime_deps       # list[dict] — spec.runtime.dependencies entries
+```
+
+### `runtime_deps` format
+
+Each entry in `ctx.runtime_deps` is a dict with:
+
+```python
+{"name": "nodejs", "type": "apt-nodesource", "version": "20"}
+{"name": "pnpm", "type": "npm-global"}
+{"name": "git", "type": "apt"}
+```
+
+See [Runtime Dependencies](/runtime-deps) for the full specification.

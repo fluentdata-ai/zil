@@ -21,6 +21,10 @@ zil init <name> [options]
 | Option | Values | Default | Description |
 |--------|--------|---------|-------------|
 | `--llm` | `gemini`, `anthropic`, `openai`, `vertex` | `gemini` | LLM provider |
+| `--mcp` | `none`, `filesystem`, `git`, `custom` | `none` | Include MCP server scaffolding |
+| `--agents` | comma-separated names | — | Sub-agent names for [multi-agent](/multi-agent) scaffold (e.g. `vta,vtd`) |
+| `--skills` | comma-separated names | — | [Skill](/skills) names to scaffold in `skills/` (e.g. `fd-submit-changes,fd-run-tests`) |
+| `--service` | `none`, `webhook` | `none` | Service mode: `webhook` scaffolds FastAPI `app.py` + `runner.py` with [HITL](/multi-agent#human-in-the-loop-hitl) support |
 | `--no-evals` | — | — | Skip eval suite scaffolding |
 | `--no-otel` | — | — | Skip OpenTelemetry instrumentation |
 | `--non-interactive` | — | — | Use defaults for all prompts |
@@ -36,6 +40,15 @@ zil init my-agent --non-interactive
 
 # Specify LLM provider directly
 zil init my-agent --llm vertex
+
+# Multi-agent project with webhook service
+zil init my-agent --agents vta,vtd --service webhook
+
+# Scaffold with skills
+zil init my-agent --agents vta,vtd --skills fd-explore-repo,fd-submit-changes
+
+# Include MCP server scaffolding
+zil init my-agent --mcp filesystem
 ```
 
 ### Generated files
@@ -58,6 +71,18 @@ zil init my-agent --llm vertex
 - `Dockerfile` — multi-stage container build
 - `.github/workflows/zil-pipeline.yaml` — CI/CD pipeline
 - `README.md`, `.gitignore`, `requirements.txt`
+
+With `--agents`, additionally generates:
+- `agents/{name}/identity/` — per-agent identity directories (`persona.md`, `instructions.md`, `guardrails.yaml`)
+- `spec.agents` entries in `manifest.yaml`
+
+With `--service webhook`, additionally generates:
+- `{module_name}/app.py` — FastAPI webhook entry point with `/human/respond` HITL endpoint
+- `{module_name}/runner.py` — execution runner for webhook-driven agents
+
+With `--skills`, additionally generates:
+- `skills/{name}/SKILL.md` — skill stub files
+- `spec.skills` reference in `manifest.yaml`
 
 Where `{module_name}` is the agent name converted to snake_case (e.g., `my-agent` → `my_agent`).
 
@@ -101,6 +126,10 @@ zil validate [options]
 5. **Eval suite** — `baseline.yaml` and referenced case files exist
 6. **Observability config** — `config.yaml` exists, checks for recommended attributes
 7. **Environment variables** — `spec.env` declarations, adapter cross-references
+8. **MCP tools** — source directories exist, entry_point files present, source location convention, env var references
+9. **Multi-agent** — `spec.agents` identity directories, LLM model references, MCP server name references, skill references
+10. **Runtime dependencies** — warns on unknown dependency types, flags `npm-global` without `apt-nodesource` (Node.js)
+11. **Cost config** — budget consistency checks, cross-reference with resource limits
 
 ### Examples
 
@@ -609,6 +638,10 @@ zil web --docker --trace
 zil web --docker --port 3000
 ```
 
+**Dockerfile auto-regeneration** — `zil web --docker` regenerates the Dockerfile from `manifest.yaml` before every `docker build`, ensuring that `spec.runtime.dependencies` and `spec.tools.host_dependencies` are always reflected in the container. You don't need to manually edit the Dockerfile.
+
+Docker runs also load both `.env` and `.env.local` files for complete environment configuration.
+
 When `--docker --trace` is used, a [Grafana OTEL-LGTM](https://github.com/grafana/docker-otel-lgtm) container is started alongside your agent, providing:
 
 - **Traces** (Tempo) — every agent invocation, LLM call, and tool execution
@@ -651,6 +684,10 @@ zil deploy [options]
 | `--trace` | — | — | Enable Cloud Trace telemetry |
 | `--skip-evals` | — | — | Skip pre-deploy eval check |
 | `--from` | ref | — | Deploy from a `.zil` file or OCI registry reference |
+| `--env-file` | path | — | Dotenv file with env var values (for CI/automation) |
+| `--allow-unauthenticated` | — | — | Allow unauthenticated access to the Cloud Run service |
+| `--memory` | string | `1Gi` | Cloud Run memory limit (e.g. `512Mi`, `1Gi`, `2Gi`) |
+| `--output` | `text`, `json` | `text` | Output format — `json` for machine-readable deploy results |
 
 ### Prerequisites
 
@@ -702,9 +739,37 @@ zil deploy --from us-docker.pkg.dev/my-project/agents/my-agent:1.0.0 \
 ### What happens during deploy
 
 1. **Eval gate** — runs the eval suite. If evals fail, deployment is **blocked** (exit code 1). Use `--skip-evals` to override.
-2. **Context bundling** — copies `manifest.yaml`, `identity/`, `adapters/`, and `observability/` into the agent module directory so they're available at runtime.
-3. **`adk deploy cloud_run`** — builds the container image via Cloud Build, deploys to Cloud Run, and routes traffic.
-4. **Cleanup** — removes bundled files from your local source tree.
+2. **Env resolution** — collects environment variables from `--env-file`, process env, or interactive prompts. Injects them via `--set-env-vars`.
+3. **Dockerfile generation** — if `spec.tools.host_dependencies` or `spec.runtime.dependencies` are declared, generates a custom Dockerfile with the correct `RUN` stanzas. See [Runtime Dependencies](/runtime-deps).
+4. **Cloud SQL auto-wiring** — if `SESSION_DB_URI` contains a Cloud SQL connection string, automatically extracts the instance name and passes `--add-cloudsql-instances` to `gcloud run deploy`.
+5. **`gcloud run deploy --source`** — builds the container image via Cloud Build, deploys to Cloud Run, and routes traffic.
+6. **Cleanup** — removes bundled files from your local source tree.
+
+### JSON output
+
+Use `--output json` for machine-readable deploy results (ideal for CI pipelines):
+
+```bash
+zil deploy --project my-project --region us-central1 --output json
+```
+
+```json
+{
+  "agent": "my-agent",
+  "version": "1.0.0",
+  "service": "my-agent",
+  "project": "my-project",
+  "region": "us-central1",
+  "url": "https://my-agent-abc123-uc.a.run.app",
+  "endpoints": {
+    "adk_web": "https://my-agent-abc123-uc.a.run.app/dev-ui",
+    "webhook": "https://my-agent-abc123-uc.a.run.app/webhook",
+    "hitl_respond": "https://my-agent-abc123-uc.a.run.app/human/respond"
+  },
+  "cloud_sql_instance": "my-project:us-central1:my-instance",
+  "deployed_at": "2026-05-21T14:30:00Z"
+}
+```
 
 ### Pre-deploy eval gate
 

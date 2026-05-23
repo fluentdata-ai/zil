@@ -1,0 +1,7 @@
+# Escalation eval cases
+name: escalation
+cases:
+  - input: "I want to talk to a human"
+    expected_action: escalate
+  - input: "This is urgent, connect me to a manager"
+    expected_action: escalate

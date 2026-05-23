@@ -5,6 +5,9 @@ export default {
   sdk: "SDK Reference",
   packaging: "Packaging & Registry",
   tools: "MCP Tools",
+  "multi-agent": "Multi-Agent & HITL",
+  skills: "Skills",
+  "runtime-deps": "Runtime Dependencies",
   signing: "Archive Signing",
   cost: "Cost Tracking",
   "---": {

@@ -1,0 +1,340 @@
+# Multi-Agent & HITL
+
+Zil supports multi-agent projects where a root orchestrator delegates tasks to specialized sub-agents, each with its own identity, model, and tool assignments. Pair this with the **Human-in-the-Loop (HITL)** SDK to pause agent execution and wait for human approval before proceeding.
+
+## Overview
+
+```
+my-agent/
+├── manifest.yaml           # spec.agents declares sub-agents
+├── my_agent/
+│   ├── agent.py            # root orchestrator
+│   ├── app.py              # (webhook) FastAPI entry point
+│   └── runner.py           # (webhook) execution runner
+├── agents/
+│   ├── vta/
+│   │   └── identity/       # sub-agent identity files
+│   └── vtd/
+│       └── identity/
+├── skills/                 # shared skills (see /skills)
+├── identity/               # root agent identity
+└── tools/                  # MCP servers
+```
+
+When you call `zil.create_agent()`, the SDK reads `spec.agents`, builds each sub-agent as an ADK `LlmAgent`, wraps them as `AgentTool` instances, and attaches them to the root agent's tool list.
+
+---
+
+## Scaffolding
+
+### Multi-agent project
+
+```bash
+zil init my-agent --agents vta,vtd
+```
+
+This scaffolds:
+- A root agent in `my_agent/agent.py`
+- Per-agent identity directories under `agents/vta/identity/` and `agents/vtd/identity/`
+- `spec.agents` entries pre-wired in `manifest.yaml`
+
+### Webhook service mode
+
+```bash
+zil init my-agent --agents vta,vtd --service webhook
+```
+
+Adds `app.py` (FastAPI) and `runner.py` for webhook-driven agents with HITL support. The webhook entry point receives events (e.g., from Jira, Slack, GitHub) and dispatches them to the agent runner.
+
+---
+
+## Manifest configuration
+
+### `spec.agents`
+
+Declare sub-agents in `manifest.yaml`:
+
+```yaml
+spec:
+  agents:
+    - name: vta
+      role: planner
+      description: Plans implementation tasks. Never modifies code.
+      identity: ./agents/vta/identity
+      llm:
+        model: gemini-2.5-flash
+        model_env_var: VTA_MODEL
+      tools:
+        mcp_servers:
+          - jira
+          - github
+        skills:
+          - fd-explore-repo
+          - fd-read-jira-task
+
+    - name: vtd
+      role: executor
+      description: Executes the plan and submits changes via PR.
+      identity: ./agents/vtd/identity
+      llm:
+        model: gemini-2.5-flash
+        model_env_var: VTD_MODEL
+      tools:
+        mcp_servers:
+          - jira
+          - github
+        skills:
+          - fd-submit-changes
+          - fd-run-tests
+          - fd-format-code
+```
+
+### Sub-agent fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Unique identifier (lowercase, used as ADK agent name) |
+| `role` | string | No | Short role label (e.g. `planner`, `executor`) |
+| `description` | string | Yes | What this agent does (passed to `AgentTool`) |
+| `identity` | string | Yes | Path to identity directory (`persona.md`, `instructions.md`, `guardrails.yaml`) |
+| `llm.model` | string | No | Model override for this sub-agent (defaults to root adapter) |
+| `llm.model_env_var` | string | No | Env var to override the model at runtime |
+| `tools.mcp_servers` | string[] | No | MCP server names (must match `spec.tools.mcp_servers[].name`) |
+| `tools.skills` | string[] | No | Skill names (must exist in `skills/` directory) |
+
+### Model resolution
+
+Each sub-agent's model is resolved in this order:
+
+1. **`model_env_var`** — if set and the env var is non-empty, use its value
+2. **`llm.model`** — explicit model string in the agent spec
+3. **Root adapter** — falls back to the root agent's `adapters/llm.yaml`
+
+This lets you override models per-environment without changing the manifest:
+
+```bash
+export VTA_MODEL=gemini-2.5-pro  # planner gets a stronger model
+zil web
+```
+
+---
+
+## SDK integration
+
+### How sub-agents are built
+
+When `zil.create_agent()` detects `spec.agents`, it:
+
+1. Loads each sub-agent's identity files (persona, instructions, guardrails)
+2. Resolves the sub-agent's model (see model resolution above)
+3. Filters MCP servers from the root `spec.tools.mcp_servers` by name
+4. Loads skills from `skills/` and filters to the sub-agent's `tools.skills` allowlist
+5. Creates an ADK `LlmAgent` with the resolved model, instruction, and tools
+6. Wraps each sub-agent as an `AgentTool` and adds it to the root agent's tool list
+
+```python
+import zil
+
+# Root agent automatically gets sub-agents as tools
+root_agent = zil.create_agent(
+    tools=[my_custom_tool],  # your own tools
+)
+# root_agent now has: [my_custom_tool, AgentTool(vta), AgentTool(vtd)]
+```
+
+### Adding custom tools to sub-agents
+
+The SDK builds sub-agents from the manifest. If you need to inject additional Python tools into sub-agents, build them manually:
+
+```python
+import zil
+from zil.sdk.loader import load_project
+from zil.sdk.agent import resolve_model
+from zil.sdk.identity import compose_instruction
+from google.adk.agents import LlmAgent
+from google.adk.tools.agent_tool import AgentTool
+
+ctx = load_project()
+
+# Build a sub-agent with custom Python tools
+vta = LlmAgent(
+    model=resolve_model(ctx.agents[0].llm_adapter),
+    name="vta",
+    description="Plans implementation tasks.",
+    instruction=compose_instruction(
+        persona=ctx.agents[0].identity.persona,
+        instructions=ctx.agents[0].identity.instructions,
+        guardrails=ctx.agents[0].identity.guardrails,
+    ),
+    tools=[my_filesystem_tool, my_grep_tool],  # custom tools
+)
+
+root_agent = zil.create_agent(
+    tools=[AgentTool(agent=vta), other_tool],
+)
+```
+
+---
+
+## Human-in-the-Loop (HITL)
+
+The HITL SDK lets agent tools pause execution and wait for human input. The mechanism is framework-neutral and works with ADK's session state.
+
+### Flow
+
+```
+Agent tool calls request_human_input()
+  → Records pending request in session state
+  → Sends notification (log, Jira, Slack)
+  → Agent turn ends cleanly
+
+Human responds via /human/respond webhook
+  → Injects response into session state
+  → Runner resumes the agent with the updated state
+  → Tool reads the human response and continues
+```
+
+### SDK API
+
+```python
+from zil.sdk.hitl import request_human_input, HumanInputRequest
+
+async def approve_plan(plan: str, tool_context) -> str:
+    """Ask a human to approve the implementation plan."""
+    request = HumanInputRequest(
+        question="Please review and approve this implementation plan.",
+        context={"plan": plan, "risk_level": "medium"},
+        options=["approve", "reject", "modify"],
+    )
+
+    response = await request_human_input(request, tool_context)
+
+    if response.choice == "__pending__":
+        return "Waiting for human approval. I'll resume when you respond."
+
+    if response.choice == "approve":
+        return f"Plan approved. Proceeding with implementation."
+    elif response.choice == "reject":
+        return f"Plan rejected. Comment: {response.comment}"
+    else:
+        return f"Modification requested: {response.comment}"
+```
+
+### `HumanInputRequest`
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `question` | string | — | The prompt shown to the human |
+| `context` | dict | `{}` | Structured context (plan details, risk level, etc.) |
+| `options` | list[str] | `[]` | Valid response choices (empty = free-text) |
+| `interaction_id` | string | auto-UUID | Correlation ID for request/response matching |
+
+### `HumanInputResponse`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `interaction_id` | string | Matches the request's `interaction_id` |
+| `choice` | string | The human's selection or `"__pending__"` if awaiting response |
+| `comment` | string | Optional free-text comment |
+| `timed_out` | bool | `True` if no response was received in time |
+
+### Webhook endpoint
+
+When using `--service webhook` scaffolding, the generated `app.py` includes a `/human/respond` endpoint:
+
+```python
+# POST /human/respond
+{
+    "session_id": "abc-123",
+    "interaction_id": "uuid-from-request",
+    "choice": "approve",
+    "comment": "Looks good, proceed."
+}
+```
+
+The endpoint injects the response as a `state_delta` and calls `runner.run_async()` to resume the agent.
+
+### Notification channels
+
+The HITL system dispatches notifications via a pluggable channel system. The channel is configured in session state via `hitl_channel`:
+
+| Channel | Status | Description |
+|---------|--------|-------------|
+| `log` | Available | Logs the request (default) |
+| `jira_comment` | Planned | Posts a Jira comment with approve/reject buttons |
+| `slack` | Planned | Sends a Slack message with interactive actions |
+| `http_callback` | Planned | POSTs to an arbitrary webhook URL |
+
+---
+
+## Validation
+
+`zil validate` checks multi-agent configuration:
+
+```
+✓ spec.agents — 2 sub-agent(s) declared
+✓ spec.agents[vta] — identity directory exists
+✓ spec.agents[vta] — LLM model reference valid
+✓ spec.agents[vta] — MCP server references: jira, github (found)
+✓ spec.agents[vtd] — identity directory exists
+✓ spec.agents[vtd] — LLM model reference valid
+✓ spec.agents[vtd] — MCP server references: jira, github (found)
+```
+
+### What it checks
+
+| Check | Description |
+|-------|-------------|
+| **Identity directory** | Sub-agent identity path exists and contains `persona.md`, `instructions.md` |
+| **LLM model** | Model string is non-empty; `model_env_var` is a valid env var name |
+| **MCP server references** | Each name in `tools.mcp_servers` matches a `spec.tools.mcp_servers[].name` |
+| **Skill references** | Each name in `tools.skills` corresponds to a directory in `skills/` |
+
+---
+
+## Deploy
+
+### Cloud SQL auto-wiring
+
+When `zil deploy` detects a `SESSION_DB_URI` environment variable containing a Cloud SQL connection string (e.g. `postgresql+pg8000://user:pass@/db?host=/cloudsql/project:region:instance`), it automatically extracts the instance name and passes `--add-cloudsql-instances` to `gcloud run deploy`. No manual configuration needed.
+
+### JSON output
+
+Use `--output json` for machine-readable deploy results (useful in CI):
+
+```bash
+zil deploy --project my-project --region us-central1 --output json
+```
+
+```json
+{
+  "agent": "my-agent",
+  "version": "1.0.0",
+  "service": "my-agent",
+  "project": "my-project",
+  "region": "us-central1",
+  "url": "https://my-agent-abc123-uc.a.run.app",
+  "endpoints": {
+    "adk_web": "https://my-agent-abc123-uc.a.run.app/dev-ui",
+    "webhook": "https://my-agent-abc123-uc.a.run.app/webhook",
+    "hitl_respond": "https://my-agent-abc123-uc.a.run.app/human/respond"
+  },
+  "cloud_sql_instance": "my-project:us-central1:my-instance",
+  "deployed_at": "2026-05-21T14:30:00Z"
+}
+```
+
+---
+
+## Example: SVT (Software Virtual Team)
+
+The [examples/svt](https://github.com/fluentdata-co/zil/tree/main/examples/svt) directory contains a complete multi-agent project with:
+
+- **VTL** (root) — Virtual Team Lead orchestrator
+- **VTA** — Virtual Team Architect (planner)
+- **VTD** — Virtual Team Developer (executor)
+- Webhook service mode with Jira integration
+- HITL approval flow for implementation plans
+- Skills: `fd-explore-repo`, `fd-read-jira-task`, `fd-submit-changes`, `fd-run-tests`, `fd-format-code`
+- MCP servers: Jira, GitHub
+- Full eval suite and observability config

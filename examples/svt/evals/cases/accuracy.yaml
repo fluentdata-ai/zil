@@ -1,0 +1,14 @@
+# Accuracy eval cases
+name: accuracy
+cases:
+  - input: "What is Zil?"
+    expected_output: "Zil is a framework for production AI agents"
+    expected_contains:
+      - "framework"
+      - "agent"
+    context:
+      - "Zil is an open-source framework by FluentData for building production AI agents"
+  - input: "Hello"
+    expected_contains:
+      - "hello"
+    metrics: []  # deterministic only — no LLM judge needed

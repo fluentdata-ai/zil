@@ -1,0 +1,10 @@
+# Eval engine configuration
+# Docs: https://getzil.dev/docs/evals
+eval_engine:
+  framework: deepeval
+  judge:
+    # LLM used for evaluation scoring (separate from agent LLM)
+    provider: gemini
+    model: gemini-2.0-flash
+    # Credentials — set this env var in your .env file
+    api_key_env: GOOGLE_API_KEY

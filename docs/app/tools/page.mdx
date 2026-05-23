@@ -108,6 +108,8 @@ Supported packages:
 
 During deployment, Zil generates a custom Dockerfile that installs these packages via `apt-get` before copying your agent code.
 
+> **Prefer `spec.runtime.dependencies` for new projects.** The newer [Runtime Dependencies](/runtime-deps) system (added in 0.1.16) supports more package types (`apt`, `apt-nodesource`, `apt-gh`, `pip`, `npm-global`), version pinning, and correct installation ordering. `host_dependencies` is kept for backward compatibility.
+
 ---
 
 ## Local development

@@ -5,6 +5,14 @@ All notable changes to the `zil-ai` package will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.17] — 2026-05-23
+
+### Added
+
+- **`zil deploy --memory`** — new CLI option to set Cloud Run memory limit (default: `1Gi`). Accepts standard Cloud Run memory values like `512Mi`, `1Gi`, `2Gi`.
+- **Cloud Run deploy tuning** — deploy now sets `--timeout=3600` (up from 300), `--concurrency=80`, `--max-instances=1`, and `--session-affinity` for better agent workload defaults.
+- **Documentation overhaul** — three new doc pages (Multi-Agent & HITL, Skills, Runtime Dependencies) and comprehensive updates to CLI reference, SDK reference, introduction, getting-started, and MCP tools pages covering all features from 0.1.14–0.1.16. Refreshed `agent-content.txt` agent-friendly reference.
+
 ## [0.1.16] — 2026-05-22
 
 ### Added
@@ -290,6 +298,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - JSON Schema for Zil v1 manifest (`spec/v1/manifest.schema.json`).
 - 15 CLI tests.
 
+[0.1.17]: https://github.com/fluentdata-co/zil/compare/v0.1.16...v0.1.17
 [0.1.16]: https://github.com/fluentdata-co/zil/compare/v0.1.15...v0.1.16
 [0.1.15]: https://github.com/fluentdata-co/zil/compare/v0.1.14...v0.1.15
 [0.1.14]: https://github.com/fluentdata-co/zil/compare/v0.1.13...v0.1.14

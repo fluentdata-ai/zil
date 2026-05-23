@@ -14,7 +14,7 @@ import yaml
 from rich.console import Console
 from rich.prompt import Prompt
 
-console = Console()  # All Rich output goes through here (stderr in production, captured by CliRunner in tests)
+console = Console()  # Rich output (captured by CliRunner in tests)
 
 
 def _resolve_module(project_dir: Path) -> str:
@@ -222,6 +222,7 @@ def _deploy_with_mcp_deps(
     module_dir: str,
     cloud_sql_instance: str | None = None,
     runtime_deps: list[dict] | None = None,
+    memory: str = "1Gi",
 ) -> int:
     """Deploy with a custom Dockerfile that installs host dependencies."""
     import importlib.metadata
@@ -266,8 +267,11 @@ def _deploy_with_mcp_deps(
         f"--project={project}",
         f"--region={region}",
         "--port=8000",
-        "--memory=1Gi",
-        "--timeout=300",
+        f"--memory={memory}",
+        "--timeout=3600",
+        "--concurrency=80",
+        "--max-instances=1",
+        "--session-affinity",
     ]
     if env_vars:
         env_pairs = ",".join(f"{k}={v}" for k, v in env_vars.items())
@@ -384,6 +388,7 @@ def _deploy_cloud_run(
     with_ui: bool,
     env_vars: dict[str, str] | None = None,
     allow_unauthenticated: bool = False,
+    memory: str = "1Gi",
 ) -> dict[str, Any]:
     """Deploy to Cloud Run via adk deploy cloud_run."""
     service_name = service or agent_name
@@ -441,6 +446,7 @@ def _deploy_cloud_run(
             host_deps, module_dir,
             cloud_sql_instance=cloud_sql_instance,
             runtime_deps=runtime_deps,
+            memory=memory,
         )
     else:
         if not shutil.which("adk"):
@@ -579,6 +585,11 @@ def _deploy_cloud_run(
     help="Allow unauthenticated access to the Cloud Run service.",
 )
 @click.option(
+    "--memory",
+    type=str, default="1Gi",
+    help="Cloud Run memory limit (default: 1Gi). Examples: 512Mi, 1Gi, 2Gi.",
+)
+@click.option(
     "--output", "output_format",
     type=click.Choice(["text", "json"], case_sensitive=False),
     default="text",
@@ -595,6 +606,7 @@ def deploy(
     from_ref: str | None,
     env_file: Path | None,
     allow_unauthenticated: bool,
+    memory: str,
     output_format: str,
 ) -> None:
     """Deploy the agent to Cloud Run."""
@@ -602,7 +614,7 @@ def deploy(
     if from_ref:
         result = _deploy_from_artifact(
             from_ref, gcp_project, gcp_region, service, trace, with_ui, env_file,
-            allow_unauthenticated,
+            allow_unauthenticated, memory=memory,
         )
         _emit_deploy_result(result, output_format)
         return
@@ -655,7 +667,7 @@ def deploy(
     deploy_result = _deploy_cloud_run(
         project_dir, agent_name, module_dir,
         project, region, service, trace, with_ui, env_vars,
-        allow_unauthenticated,
+        allow_unauthenticated, memory=memory,
     )
     _emit_deploy_result(deploy_result, output_format)
 
@@ -669,6 +681,7 @@ def _deploy_from_artifact(
     with_ui: bool,
     env_file: Path | None = None,
     allow_unauthenticated: bool = False,
+    memory: str = "1Gi",
 ) -> dict[str, Any]:
     """Deploy from a .zil archive or OCI registry reference."""
     import tempfile
@@ -739,5 +752,5 @@ def _deploy_from_artifact(
     return _deploy_cloud_run(
         project_dir, agent_name, module_dir,
         project, region, service, trace, with_ui, env_vars,
-        allow_unauthenticated,
+        allow_unauthenticated, memory=memory,
     )

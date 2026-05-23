@@ -17,7 +17,7 @@ Verify:
 
 ```bash
 zil --version
-# zil, version 0.1.12
+# zil, version 0.1.17
 ```
 
 ## 2. Create a project
@@ -88,5 +88,8 @@ See [SDK Reference](/sdk) for all `create_agent()` options.
 | Test in Docker | `zil web --docker --trace` — [CLI Reference](/cli#zil-web) |
 | Package and publish | `zil pack` → `zil push` — [Packaging](/packaging) |
 | Deploy to Cloud Run | `zil deploy` — [CLI Reference](/cli#zil-deploy) |
+| Multi-agent projects | `zil init --agents vta,vtd` — [Multi-Agent & HITL](/multi-agent) |
+| Add skills | `zil init --skills fd-submit-changes` — [Skills](/skills) |
+| Runtime dependencies | `spec.runtime.dependencies` — [Runtime Dependencies](/runtime-deps) |
 | Set up tracing | [Observability](/observability) |
 | Guardrails reference | [Identity — Guardrails](/identity/guardrails) |

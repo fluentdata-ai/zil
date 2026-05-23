@@ -1,0 +1,27 @@
+# OpenTelemetry observability configuration
+# Docs: https://getzil.dev/docs/observability
+#
+# Usage:
+#   zil run --trace          Export spans to your OTLP collector
+#   zil run --trace-console  Print spans to stderr (no infra needed)
+observability:
+  tracing:
+    exporter: otlp
+    endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT}
+    sample_rate: 1.0
+  resource_attributes:
+    service.name: svt
+  span_conventions:
+    - agent.session
+    - agent.turn
+    - agent.reasoning
+    - agent.skill.invoke
+    - agent.mcp.tool_call
+    - agent.guardrail.check
+  required_attributes:
+    - agent.name
+    - agent.version
+    - session.id
+    - tokens.input
+    - tokens.output
+    - cost.usd

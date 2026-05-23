@@ -1,0 +1,14 @@
+# Core dependencies for svt
+zil-ai[adk]>=0.1.16
+google-adk>=2.0.0
+google-cloud-storage>=2.0.0
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic>=2.9
+anthropic>=0.40.0
+mcp>=1.0.0
+gitpython>=3.1
+pyyaml>=6.0
+opentelemetry-api>=1.20
+opentelemetry-sdk>=1.20
+opentelemetry-exporter-otlp>=1.20

@@ -1,0 +1,50 @@
+# Guardrails — runtime-enforced rules for the agent
+# Docs: https://getzil.dev/docs/identity/guardrails
+#
+# These rules are enforced at runtime by Zil's guardrail engine.
+# The engine checks input (before LLM) and output (after LLM).
+
+# --- Detection toggles (built-in pattern libraries) ---
+detection:
+  # Block common prompt injection patterns (ignore instructions, DAN, etc.)
+  prompt_injection: true
+  # Scan agent output for PII (SSN, credit card patterns)
+  pii_output: true
+  # Scan user input for PII (disabled by default — enable for sensitive apps)
+  pii_input: false
+
+# --- Custom blocked patterns (regex) ---
+# Each pattern is checked against input, output, or both.
+blocked_patterns: []
+  # Example:
+  # - name: internal_urls
+  #   pattern: "https?://internal\\."
+  #   target: output      # "input" | "output" | "both"
+  #   severity: block      # "block" | "warn" | "log"
+
+# --- Denied topics (keyword matching on input) ---
+denied_topics: []
+  # Example:
+  # - "competitor pricing"
+  # - "salary information"
+
+# --- Output constraints ---
+output_constraints:
+  max_response_length: 4000
+
+# --- LLM instruction rules (included in system prompt, not enforced) ---
+# These are passed to the LLM as instructions but not programmatically checked.
+hard_blocks:
+  - topic: illegal_activity
+    description: Refuse requests for illegal activities.
+  - topic: personal_data_extraction
+    description: Never extract or store personal data beyond the session.
+
+escalation_triggers:
+  - condition: user_requests_human
+    action: escalate
+    message: "Connecting you with a human agent."
+  - condition: confidence_below_threshold
+    threshold: 0.3
+    action: escalate
+    message: "I'm not confident in my answer. Let me connect you with a specialist."

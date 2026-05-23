@@ -1,0 +1,153 @@
+apiVersion: zil/v1
+kind: Agent
+metadata:
+  name: svt
+  version: 0.1.0
+  description: >
+    SVT (Software Velocity Team) — multi-agent hierarchy that can take a JIRA task, plans implementation (VTA), and executes it (VTD).
+  labels:
+    team: engineering
+spec:
+  runtime:
+    framework: adk
+    language: python
+    python_version: "3.12"
+    llm:
+      adapter: ./adapters/llm.yaml
+    embedding:
+      adapter: ./adapters/embed.yaml
+    resource_limits:
+      max_tokens_per_request: 16384
+      max_duration_seconds: 600
+    dependencies:
+      - name: git
+        type: apt
+      - name: nodejs
+        type: apt-nodesource
+        version: "20"
+      - name: pnpm
+        type: npm-global
+      - name: turbo
+        type: npm-global
+      - name: gh
+        type: apt-gh
+      - name: uv
+        type: pip
+    service:
+      entry_point: webhook
+      webhooks:
+        - name: jira
+          path: /webhooks/jira
+          signature_header: X-Hub-Signature
+          algorithm: sha256
+          secret_env: JIRA_WEBHOOK_SECRET
+  identity: ./identity
+  agents:
+    - name: vta
+      role: sub-agent
+      identity: ./agents/vta/identity
+      description: >
+        Virtual Team Architect — reads the Jira task, explores the repo,
+        and produces a detailed implementation plan in <KEY>-plan.md.
+        Does NOT modify code.
+      llm:
+        model_env_var: AGENT_VTA_MODEL
+      tools:
+        mcp_servers: [jira]
+        skills:
+          - fd-explore-repo
+          - fd-read-jira-task
+    - name: vtd
+      role: sub-agent
+      identity: ./agents/vtd/identity
+      description: >
+        Virtual Team Developer — reads the plan produced by VTA and
+        executes it step by step, then submits the changes via PR.
+      llm:
+        model_env_var: AGENT_VTD_MODEL
+      tools:
+        mcp_servers: [jira]
+        skills:
+          - fd-submit-changes
+          - fd-run-tests
+          - fd-format-code
+  skills: ./skills
+  evals: ./evals
+  observability: ./observability
+  cost:
+    max_tokens_per_session: 2000000
+    alert_threshold_pct: 80
+    track_by_model: true
+  env:
+    - name: GOOGLE_API_KEY
+      description: Gemini API key (used by VTL root agent)
+      required: true
+      secret: true
+    - name: ANTHROPIC_API_KEY
+      description: Anthropic API key (used by VTD — claude-sonnet-4)
+      required: false
+      secret: true
+    - name: AGENT_VTL_MODEL
+      description: Override VTL model at runtime (default gemini-2.5-flash)
+      required: false
+    - name: AGENT_VTA_MODEL
+      description: Override VTA model at runtime (default gemini-2.5-pro)
+      required: false
+    - name: AGENT_VTD_MODEL
+      description: Override VTD model at runtime (default anthropic/claude-sonnet-4-20250514)
+      required: false
+    - name: GITHUB_REPO_URL
+      description: URL of the target repo to clone for each task
+      required: true
+    - name: GITHUB_TOKEN
+      description: GitHub PAT for authenticated HTTPS cloning (Contents read; add PRs write for plan_and_execute)
+      required: false
+      secret: true
+    - name: GITHUB_DEFAULT_BASE_BRANCH
+      description: Branch to clone and base PRs from (default dev)
+      required: false
+    - name: JIRA_BASE_URL
+      description: Base URL of the Jira instance (e.g. https://company.atlassian.net)
+      required: true
+    - name: JIRA_WEBHOOK_SECRET
+      description: HMAC secret for validating inbound Jira webhooks
+      required: true
+      secret: true
+    - name: AGENT_MODE
+      description: "Operation mode: plan_only | plan_and_execute"
+      required: false
+    - name: AGENT_WORKSPACE_ROOT
+      description: Host directory where per-task repo clones are created (default /tmp/workspaces)
+      required: false
+    - name: SESSION_DB_URI
+      description: SQLAlchemy URI for durable session storage (default sqlite)
+      required: false
+      secret: false
+    - name: DEBUG_TOKEN
+      description: Token required to call /debug/run-task (leave unset to disable endpoint)
+      required: false
+      secret: true
+    - name: JIRA_API_TOKEN
+      description: Atlassian API token for the Jira MCP server
+      required: true
+      secret: true
+    - name: JIRA_MCP_COMMAND
+      description: Binary to launch the Jira MCP stdio server (e.g. uvx or node)
+      required: true
+    - name: JIRA_USER_EMAIL
+      description: User email to authenticate with Jira
+      required: true
+  tools:
+    mcp_servers:
+      - name: jira
+        transport: stdio
+        command: "${JIRA_MCP_COMMAND}"
+        args:
+          - "mcp-server-jira"
+          - "--jira-base-url"
+          - "${JIRA_BASE_URL}"
+          - "--jira-token"
+          - "${JIRA_API_TOKEN}"
+        tool_filter: []
+        timeout: 30
+    host_dependencies: []   # tooling moved to spec.runtime.dependencies

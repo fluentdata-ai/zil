@@ -1,0 +1,199 @@
+# Skills
+
+Skills are reusable, discoverable procedures that agents can invoke at runtime. They live under a `skills/` directory in your project root, with each skill defined by a `SKILL.md` Markdown file describing a step-by-step procedure.
+
+Zil uses ADK's `SkillToolset` to load skills and make them available to agents as tools. In multi-agent projects, skills can be filtered per sub-agent via `spec.agents[].tools.skills`.
+
+## Directory convention
+
+```
+my-agent/
+├── manifest.yaml
+├── skills/
+│   ├── fd-explore-repo/
+│   │   └── SKILL.md
+│   ├── fd-submit-changes/
+│   │   └── SKILL.md
+│   ├── fd-run-tests/
+│   │   └── SKILL.md
+│   └── fd-format-code/
+│       └── SKILL.md
+└── ...
+```
+
+Each skill lives in its own subdirectory under `skills/`. The directory name is the skill identifier (used in `spec.agents[].tools.skills` allowlists). The `SKILL.md` file is the skill definition.
+
+---
+
+## Scaffolding
+
+```bash
+zil init my-agent --skills fd-submit-changes,fd-run-tests
+```
+
+This creates stub `SKILL.md` files under `skills/fd-submit-changes/` and `skills/fd-run-tests/`.
+
+You can combine with other `zil init` options:
+
+```bash
+zil init my-agent --agents vta,vtd --skills fd-explore-repo,fd-submit-changes --service webhook
+```
+
+---
+
+## SKILL.md format
+
+A `SKILL.md` file describes a step-by-step procedure the agent should follow. ADK's `load_skill_from_dir` parses this file and makes it available as a tool.
+
+### Example: `fd-submit-changes`
+
+```markdown
+# fd-submit-changes
+
+Submit code changes via a GitHub pull request.
+
+## Procedure
+
+1. **Check working directory** — run `git status` to confirm you are in the correct repo.
+2. **Create a feature branch** — `git checkout -b feat/<ticket-id>-<slug>` from the base branch.
+3. **Stage changes** — `git add -A` to stage all modified files.
+4. **Commit** — `git commit -m "<type>(<scope>): <description>"` using conventional commits.
+5. **Push** — `git push -u origin HEAD`.
+6. **Open PR** — use `gh pr create --title "<title>" --body "<body>" --base dev`.
+7. **Report** — return the PR URL and summary.
+
+## Rules
+
+- Never force-push.
+- Always create a new branch; never commit directly to `main` or `dev`.
+- Use conventional commit format.
+- Include the Jira ticket ID in the branch name and PR title.
+```
+
+### Example: `fd-run-tests`
+
+```markdown
+# fd-run-tests
+
+Run the project's test suite and report results.
+
+## Procedure
+
+1. **Detect test framework** — look for `pytest.ini`, `pyproject.toml [tool.pytest]`, `package.json` scripts, or `Makefile` targets.
+2. **Run tests** — execute the appropriate command (e.g. `pytest -v`, `npm test`, `make test`).
+3. **Parse output** — extract pass/fail counts and any error messages.
+4. **Report** — return a structured summary: total, passed, failed, and any failure details.
+
+## Rules
+
+- Never modify test files.
+- If no test framework is detected, report that no tests were found.
+- Always run tests from the project root directory.
+```
+
+---
+
+## Manifest configuration
+
+### `spec.skills`
+
+Reference the skills directory in your manifest:
+
+```yaml
+spec:
+  skills: ./skills
+```
+
+This tells the SDK where to discover skills. If omitted, the `skills/` directory is not scanned.
+
+### Per-agent skill allowlists
+
+In multi-agent projects, assign skills to specific sub-agents:
+
+```yaml
+spec:
+  skills: ./skills
+
+  agents:
+    - name: vta
+      description: Plans implementation tasks.
+      identity: ./agents/vta/identity
+      tools:
+        skills:
+          - fd-explore-repo
+          - fd-read-jira-task
+
+    - name: vtd
+      description: Executes the plan and submits changes.
+      identity: ./agents/vtd/identity
+      tools:
+        skills:
+          - fd-submit-changes
+          - fd-run-tests
+          - fd-format-code
+```
+
+Each sub-agent only gets access to the skills listed in its `tools.skills` array. Skills not listed are unavailable to that agent.
+
+---
+
+## SDK integration
+
+### How skills are loaded
+
+When `zil.create_agent()` processes a project with `spec.skills`:
+
+1. **Discovery** — scans the `skills/` directory for subdirectories containing `SKILL.md` (or `skill.md`)
+2. **Loading** — calls ADK's `load_skill_from_dir()` for each discovered skill
+3. **Indexing** — builds a `{name: Skill}` mapping
+4. **Filtering** — for each sub-agent, creates a `SkillToolset` with only the skills listed in `tools.skills`
+5. **Attachment** — adds the `SkillToolset` to the sub-agent's tool list
+
+```python
+# Skills are loaded automatically — no manual wiring needed
+import zil
+
+root_agent = zil.create_agent(tools=[my_tool])
+# Sub-agents already have their skill toolsets attached
+```
+
+### Prerequisites
+
+Skills require `google-adk>=1.0` with the `SkillToolset` module:
+
+```bash
+pip install 'zil-ai[adk]'
+```
+
+If the installed ADK version doesn't include `SkillToolset`, the SDK logs a warning and skips skill loading gracefully.
+
+---
+
+## Validation
+
+`zil validate` checks your skills configuration:
+
+```
+✓ spec.skills — 5 skill(s) discovered in skills/
+✓ spec.agents[vta].tools.skills — all 2 skill(s) found
+✓ spec.agents[vtd].tools.skills — all 3 skill(s) found
+```
+
+### What it checks
+
+| Check | Description |
+|-------|-------------|
+| **Skills directory** | `spec.skills` path exists and is a directory |
+| **SKILL.md presence** | Each subdirectory in `skills/` has a `SKILL.md` file |
+| **Agent references** | Each skill name in `spec.agents[].tools.skills` matches a discovered skill |
+
+---
+
+## Best practices
+
+- **One skill, one concern** — each skill should describe a single, well-defined procedure
+- **Be explicit** — write step-by-step procedures with concrete commands, not vague instructions
+- **Include rules** — add a "Rules" section with hard constraints the agent must follow
+- **Name with kebab-case** — use lowercase kebab-case for skill directory names (e.g. `fd-submit-changes`)
+- **Filter per agent** — assign skills to the agents that need them; a planner agent shouldn't have `fd-submit-changes`
+- **Version with the project** — skills are part of your project source, committed to version control

@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment
+.env
+.env.local
+.venv/
+venv/
+
+# Zil
+*.zil
+
+# Tools (bundled MCP servers / CLI tools)
+tools/*/node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store

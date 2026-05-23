@@ -1,0 +1,216 @@
+# Runtime Dependencies
+
+Zil lets you declaratively specify non-Python runtime dependencies in `manifest.yaml`. When you run `zil web --docker` or `zil deploy`, Zil generates ordered Dockerfile `RUN` stanzas that install these dependencies in the correct order — no manual Dockerfile editing required.
+
+## Overview
+
+Many agents need system-level tools beyond Python packages: Node.js for MCP servers, the GitHub CLI for repository operations, or npm packages like `pnpm` and `turbo`. Instead of maintaining a custom Dockerfile, declare these in your manifest and let Zil handle the container setup.
+
+```yaml
+spec:
+  runtime:
+    framework: adk
+    language: python
+    llm:
+      adapter: ./adapters/llm.yaml
+    dependencies:
+      - name: git
+        type: apt
+      - name: nodejs
+        type: apt-nodesource
+        version: "20"
+      - name: gh
+        type: apt-gh
+      - name: pnpm
+        type: npm-global
+      - name: turbo
+        type: npm-global
+```
+
+---
+
+## Dependency types
+
+| Type | Installs via | Description |
+|------|-------------|-------------|
+| `apt` | `apt-get install` | Standard Debian/Ubuntu packages (e.g. `git`, `curl`, `jq`) |
+| `apt-nodesource` | NodeSource setup script + `apt-get` | Node.js via the official [NodeSource](https://github.com/nodesource/distributions) repository. `version` specifies the major version (default: `20`). |
+| `apt-gh` | GitHub CLI apt repo | [GitHub CLI](https://cli.github.com/) (`gh`) via the official apt repository |
+| `pip` | `pip install` | Python packages not in `requirements.txt` (e.g. build tools). Use `version` for pinning. |
+| `npm-global` | `npm install -g` | Global npm packages (e.g. `pnpm`, `turbo`, `typescript`). Requires `apt-nodesource` to be declared first. |
+
+### Dependency fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Package name |
+| `type` | string | Yes | One of: `apt`, `apt-nodesource`, `apt-gh`, `pip`, `npm-global` |
+| `version` | string | No | Version constraint (e.g. `"20"` for Node.js, `"1.0.0"` for npm/pip) |
+
+---
+
+## Installation order
+
+Zil generates Dockerfile `RUN` stanzas in a fixed order to ensure dependencies are available when needed:
+
+```
+1. apt          — base system packages + curl/gnupg (if needed for repos)
+2. apt-nodesource — Node.js from NodeSource (requires curl)
+3. apt-gh       — GitHub CLI from official apt repo (requires curl/gnupg)
+4. pip          — Python packages
+5. npm-global   — Global npm packages (requires nodejs from step 2)
+```
+
+This ordering guarantees that `npm-global` packages are installed after Node.js is available, and that repository setup tools (`curl`, `gnupg`) are installed before they're needed.
+
+---
+
+## Generated Dockerfile stanzas
+
+For the manifest above, Zil generates:
+
+```dockerfile
+# Runtime dependencies (from spec.runtime.dependencies)
+RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates gnupg && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y --no-install-recommends nodejs && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
+RUN npm install -g pnpm turbo
+```
+
+Note that `curl`, `ca-certificates`, and `gnupg` are auto-injected when `apt-nodesource` or `apt-gh` types are present — you don't need to declare them manually.
+
+---
+
+## Dockerfile auto-regeneration
+
+When you run `zil web --docker`, Zil **regenerates the Dockerfile** from `manifest.yaml` before every `docker build`. This ensures that any changes to `spec.runtime.dependencies` or `spec.tools.host_dependencies` are immediately reflected in the container without manually editing the Dockerfile.
+
+```bash
+# The Dockerfile is regenerated automatically
+zil web --docker
+```
+
+This means you can treat the Dockerfile as a generated artifact — edit the manifest, and the container configuration updates automatically.
+
+---
+
+## Relationship to `host_dependencies`
+
+Zil has two ways to declare system-level dependencies:
+
+| Feature | `spec.tools.host_dependencies` | `spec.runtime.dependencies` |
+|---------|-------------------------------|----------------------------|
+| **Scope** | MCP server host packages only | Any non-Python runtime dependency |
+| **Types** | `nodejs`, `git` | `apt`, `apt-nodesource`, `apt-gh`, `pip`, `npm-global` |
+| **Granularity** | Package name only | Name + type + optional version |
+| **Since** | 0.1.13 | 0.1.16 |
+
+**`host_dependencies` is kept for backward compatibility.** For new projects, prefer `spec.runtime.dependencies` — it supports more package types, version pinning, and correct installation ordering.
+
+Both are merged during Dockerfile generation: `host_dependencies` packages are installed first, then `spec.runtime.dependencies` stanzas follow.
+
+---
+
+## SDK access
+
+The parsed dependencies are available via `ProjectContext.runtime_deps`:
+
+```python
+from zil.sdk.loader import load_project
+
+ctx = load_project()
+
+for dep in ctx.runtime_deps:
+    print(f"{dep['name']} ({dep['type']})")
+    # git (apt)
+    # nodejs (apt-nodesource)
+    # gh (apt-gh)
+    # pnpm (npm-global)
+    # turbo (npm-global)
+```
+
+---
+
+## Validation
+
+`zil validate` checks your runtime dependencies:
+
+```
+✓ spec.runtime.dependencies — 5 dependency(ies) declared
+✓ spec.runtime.dependencies — installation order valid
+⚠ spec.runtime.dependencies — 'pnpm' (npm-global) requires 'apt-nodesource' — ensure Node.js is declared
+```
+
+### What it checks
+
+| Check | Description |
+|-------|-------------|
+| **Unknown types** | Warns if a dependency uses a type not in the supported set |
+| **npm-global without Node.js** | Warns if `npm-global` entries exist without a preceding `apt-nodesource` entry |
+| **Duplicate names** | Warns if the same package name appears more than once |
+
+---
+
+## Example: full manifest with runtime dependencies
+
+```yaml
+apiVersion: zil/v1
+kind: Agent
+metadata:
+  name: svt
+  version: 1.0.0
+  description: Software Virtual Team — multi-agent coding assistant.
+  labels:
+    team: engineering
+spec:
+  runtime:
+    framework: adk
+    language: python
+    llm:
+      adapter: ./adapters/llm.yaml
+    dependencies:
+      - name: git
+        type: apt
+      - name: nodejs
+        type: apt-nodesource
+        version: "20"
+      - name: gh
+        type: apt-gh
+      - name: pnpm
+        type: npm-global
+      - name: turbo
+        type: npm-global
+  identity: ./identity
+  skills: ./skills
+  tools:
+    mcp_servers:
+      - name: jira
+        transport: stdio
+        command: node
+        args: ["./tools/jira/dist/index.js"]
+        source: ./tools/jira
+        entry_point: dist/index.js
+      - name: github
+        transport: stdio
+        command: node
+        args: ["./tools/github/dist/index.js"]
+        source: ./tools/github
+        entry_point: dist/index.js
+  agents:
+    - name: vta
+      role: planner
+      description: Plans implementation tasks.
+      identity: ./agents/vta/identity
+      tools:
+        mcp_servers: [jira, github]
+        skills: [fd-explore-repo, fd-read-jira-task]
+    - name: vtd
+      role: executor
+      description: Executes the plan and submits changes.
+      identity: ./agents/vtd/identity
+      tools:
+        mcp_servers: [jira, github]
+        skills: [fd-submit-changes, fd-run-tests, fd-format-code]
+```

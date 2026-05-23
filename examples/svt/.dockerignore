@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.git/
+.env
+/dist/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+tools/*/.git/
+tools/*/src/
+tools/*/tests/
+tools/*/docs/

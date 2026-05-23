@@ -2,6 +2,7 @@
 # https://getzil.dev/docs
 # Source: https://github.com/fluentdata-co/zil
 # Package: pip install zil-ai
+# Version: 0.1.17
 
 ## Overview
 
@@ -32,7 +33,13 @@ Scaffold a new agent project.
     zil init <name> [options]
 
 Options:
-    --llm           gemini | anthropic | openai | vertex  (default: gemini)
+    --llm              gemini | anthropic | openai | vertex  (default: gemini)
+    --mcp              none | filesystem | git | custom       (default: none)
+    --agents           Comma-separated sub-agent names (e.g. vta,vtd)
+    --skills           Comma-separated skill names (e.g. fd-submit-changes,fd-run-tests)
+    --service          none | webhook                         (default: none)
+    --no-evals         Skip eval suite scaffolding
+    --no-otel          Skip OpenTelemetry instrumentation
     --non-interactive  Use defaults for all prompts
 
 Generated files:
@@ -43,6 +50,10 @@ Generated files:
     {module_name}/__init__.py, {module_name}/agent.py, {module_name}/.env.example,
     Dockerfile, requirements.txt, .github/workflows/zil-pipeline.yaml,
     README.md, .gitignore
+
+With --agents: agents/{name}/identity/ dirs, spec.agents in manifest.
+With --service webhook: {module_name}/app.py (FastAPI), {module_name}/runner.py.
+With --skills: skills/{name}/SKILL.md stubs, spec.skills in manifest.
 
 After scaffolding, creates a .venv and installs dependencies.
 
@@ -58,9 +69,18 @@ Options:
 
 Exit codes: 0 = valid, 1 = errors, 2 = warnings only.
 
-Checks: manifest schema, identity files exist, adapter files exist,
-eval suite exists, observability config exists, guardrails.yaml
-structure (enforceable rules count, regex validity, output protections).
+Checks:
+1. Manifest schema — manifest.yaml against the Zil v1 JSON Schema
+2. Identity files — persona.md, instructions.md, guardrails.yaml exist
+3. Guardrails — structure, enforceable rule count, regex validity
+4. Adapter references — LLM and embedding adapter YAML files exist
+5. Eval suite — baseline.yaml and referenced case files exist
+6. Observability config — config.yaml exists, recommended attributes
+7. Environment variables — spec.env declarations, adapter cross-refs
+8. MCP tools — source dirs, entry_point files, env var references
+9. Multi-agent — spec.agents identity dirs, LLM model refs, MCP server refs
+10. Runtime deps — unknown types, npm-global without apt-nodesource
+11. Cost config — budget consistency checks
 
 ### zil audit
 
@@ -139,12 +159,6 @@ Options:
 Reads manifest.yaml to detect the agent module, converts kebab-case
 name to snake_case, then runs the agent.
 
---trace sets OTEL_EXPORTER_OTLP_TRACES_ENDPOINT and lets ADK handle
-OTLP export in a subprocess.
-
---trace-console runs the agent in-process with a ConsoleSpanExporter
-so spans print to stderr.
-
 ### zil web
 
 Start the ADK web UI for testing.
@@ -154,10 +168,18 @@ Start the ADK web UI for testing.
 Options:
     --project-dir DIRECTORY  Project directory (default: .)
     --port INTEGER           Port for web UI (default: 8000)
+    --docker                 Build and run in Docker container
     --trace                  Enable OTLP trace export
     --trace-console          Print spans to stderr (no collector needed)
 
 Opens a chat interface at http://localhost:{port}.
+
+Docker mode: --docker regenerates Dockerfile from manifest.yaml before
+every build, ensuring spec.runtime.dependencies and host_dependencies
+are reflected. Also loads .env and .env.local files.
+
+--docker --trace starts a Grafana OTEL-LGTM container alongside the
+agent (traces at Tempo, metrics at Mimir, logs at Loki, Grafana at :3000).
 
 ### zil push
 
@@ -190,17 +212,32 @@ Options:
     --trace                  Enable Cloud Trace export
     --skip-evals             Skip pre-deploy eval check
     --allow-unauthenticated  Allow unauthenticated access to the Cloud Run service
+    --memory TEXT            Cloud Run memory limit (default: 1Gi)
+    --output text | json     Output format (json for CI pipelines)
 
-Environment variable resolution (in priority order):
-1. Process environment variables
-2. --env-file (dotenv file)
-3. Interactive prompt (secrets are masked)
+What happens during deploy:
+1. Eval gate — blocks if below threshold (use --skip-evals to override)
+2. Env resolution — from --env-file, process env, or interactive prompts
+3. Dockerfile generation — if host_dependencies or runtime.dependencies exist
+4. Cloud SQL auto-wiring — if SESSION_DB_URI contains a Cloud SQL path,
+   auto-attaches via --add-cloudsql-instances
+5. gcloud run deploy --source — builds via Cloud Build, deploys to Cloud Run
+6. Cleanup — removes bundled files from local source tree
 
-Resolved variables are injected as Cloud Run env vars via --set-env-vars.
-
-Deploy from registry:
-    zil deploy --from us-docker.pkg.dev/proj/agents/my-agent:1.0.0 \
-      --project my-project --region us-central1
+JSON output (--output json):
+    {
+      "agent": "my-agent",
+      "version": "1.0.0",
+      "service": "my-agent",
+      "url": "https://...",
+      "endpoints": {
+        "adk_web": "https://.../dev-ui",
+        "webhook": "https://.../webhook",
+        "hitl_respond": "https://.../human/respond"
+      },
+      "cloud_sql_instance": "project:region:instance",
+      "deployed_at": "2026-05-21T14:30:00Z"
+    }
 
 ---
 
@@ -230,6 +267,9 @@ Returns a google.adk.agents.LlmAgent with:
 - zil.config populated with spec.env declarations
 - Guardrail engine loaded from identity/guardrails.yaml (agent._zil_guardrails)
 - Cost tracker initialized from spec.cost (agent._zil_cost, zil.cost singleton)
+- Sub-agents built from spec.agents (each with own identity, model, tools)
+- Skills loaded from spec.skills dir, filtered per sub-agent
+- Runtime deps parsed from spec.runtime.dependencies (ProjectContext.runtime_deps)
 
 ### zil.config
 
@@ -262,6 +302,38 @@ Resolution order:
 Raises MissingConfigError for missing required vars without defaults.
 Raises KeyError for vars not declared in spec.env.
 
+### zil.sdk.hitl — Human-in-the-Loop
+
+    from zil.sdk.hitl import request_human_input, HumanInputRequest
+
+    async def approve_plan(plan: str, tool_context) -> str:
+        request = HumanInputRequest(
+            question="Review this plan.",
+            context={"plan": plan},
+            options=["approve", "reject", "modify"],
+        )
+        response = await request_human_input(request, tool_context)
+
+        if response.choice == "__pending__":
+            return "Waiting for human approval."
+        return f"Human responded: {response.choice}"
+
+HumanInputRequest fields:
+    question          str        The prompt shown to the human
+    context           dict       Structured context (plan, risk level, etc.)
+    options           list[str]  Valid response choices (empty = free-text)
+    interaction_id    str        Auto-generated UUID for correlation
+
+HumanInputResponse fields:
+    interaction_id    str        Matches the request
+    choice            str        Human's selection or "__pending__"
+    comment           str        Optional free-text comment
+    timed_out         bool       True if no response received in time
+
+Flow: tool calls request_human_input() → records in session state →
+agent turn ends → human responds via /human/respond webhook →
+runner resumes agent with updated state → tool reads response.
+
 ### zil.sdk.setup_telemetry()
 
     from zil.sdk import setup_telemetry
@@ -288,6 +360,29 @@ Returns True if tracing was activated.
 Registers a ConsoleSpanExporter that prints spans to stderr.
 Returns True if installed.
 
+### ProjectContext
+
+    from zil.sdk.loader import load_project
+
+    ctx = load_project()
+    ctx.project_dir        # Path — project root
+    ctx.manifest           # dict — raw manifest.yaml
+    ctx.identity           # IdentityContext — persona, instructions, guardrails
+    ctx.llm_adapter        # dict — resolved LLM adapter config
+    ctx.observability      # dict | None — observability/config.yaml
+    ctx.env_declarations   # list[dict] — spec.env entries
+    ctx.cost_config        # dict | None — spec.cost
+    ctx.tools_config       # dict | None — spec.tools (MCP servers, host deps)
+    ctx.agents             # list[AgentSpec] — spec.agents entries
+    ctx.service_config     # dict | None — spec.runtime.service
+    ctx.skills_dir         # Path | None — resolved spec.skills directory
+    ctx.runtime_deps       # list[dict] — spec.runtime.dependencies entries
+
+runtime_deps format:
+    [{"name": "git", "type": "apt"},
+     {"name": "nodejs", "type": "apt-nodesource", "version": "20"},
+     {"name": "pnpm", "type": "npm-global"}]
+
 ---
 
 ## Manifest Format (manifest.yaml)
@@ -309,7 +404,18 @@ Returns True if installed.
           adapter: ./adapters/llm.yaml
         embedding:
           adapter: ./adapters/embed.yaml
+        dependencies:                   # non-Python runtime dependencies
+          - name: git
+            type: apt
+          - name: nodejs
+            type: apt-nodesource
+            version: "20"
+          - name: gh
+            type: apt-gh
+          - name: pnpm
+            type: npm-global
       identity: ./identity
+      skills: ./skills                  # path to skills directory
       evals: ./evals
       observability: ./observability
       deploy:
@@ -320,14 +426,67 @@ Returns True if installed.
           description: Gemini API key
           required: true
           secret: true
-        - name: MCP_DB_CONNECTION_STRING
-          description: PostgreSQL connection string
-          required: true
-          secret: true
-        - name: OTEL_ENDPOINT
-          description: OpenTelemetry collector endpoint
-          required: false
-          default: http://localhost:4318
+      tools:
+        mcp_servers:
+          - name: jira
+            transport: stdio
+            command: node
+            args: ["./tools/jira/dist/index.js"]
+            source: ./tools/jira
+            entry_point: dist/index.js
+        host_dependencies:
+          - nodejs
+      agents:                           # multi-agent sub-agents
+        - name: vta
+          role: planner
+          description: Plans implementation tasks.
+          identity: ./agents/vta/identity
+          llm:
+            model: gemini-2.5-flash
+            model_env_var: VTA_MODEL
+          tools:
+            mcp_servers: [jira]
+            skills: [fd-explore-repo, fd-read-jira-task]
+        - name: vtd
+          role: executor
+          description: Executes the plan.
+          identity: ./agents/vtd/identity
+          llm:
+            model: gemini-2.5-flash
+          tools:
+            mcp_servers: [jira]
+            skills: [fd-submit-changes, fd-run-tests]
+
+### spec.agents field reference
+
+    name            string    Unique identifier (lowercase)
+    role            string    Short role label (planner, executor)
+    description     string    What this agent does (passed to AgentTool)
+    identity        string    Path to identity directory
+    llm.model       string    Model override for this sub-agent
+    llm.model_env_var string  Env var to override model at runtime
+    tools.mcp_servers list    MCP server names from spec.tools.mcp_servers
+    tools.skills    list      Skill names from skills/ directory
+
+Model resolution: model_env_var → llm.model → root adapter fallback.
+
+### spec.runtime.dependencies field reference
+
+    name     string   Package name (required)
+    type     string   apt | apt-nodesource | apt-gh | pip | npm-global (required)
+    version  string   Version constraint (optional)
+
+Installation order: apt → apt-nodesource → apt-gh → pip → npm-global.
+curl/ca-certificates/gnupg auto-injected when apt-nodesource or apt-gh present.
+
+### spec.skills
+
+    spec:
+      skills: ./skills
+
+Points to the skills directory. Each subdirectory must contain SKILL.md.
+Skills are loaded via ADK's load_skill_from_dir() and made available
+as SkillToolset, filtered per sub-agent via spec.agents[].tools.skills.
 
 ### zil.cost
 
@@ -473,6 +632,112 @@ automatically when a tracer is active (via GuardrailCallback).
 
 ---
 
+## Skills
+
+Skills are reusable agent procedures in skills/{name}/SKILL.md files.
+ADK's SkillToolset loads them and makes them available as agent tools.
+
+    spec:
+      skills: ./skills
+
+Directory layout:
+    skills/
+    ├── fd-explore-repo/
+    │   └── SKILL.md
+    ├── fd-submit-changes/
+    │   └── SKILL.md
+    └── fd-run-tests/
+        └── SKILL.md
+
+SKILL.md format (markdown with # title, ## Procedure, ## Rules):
+    # fd-submit-changes
+    Submit code changes via a GitHub pull request.
+    ## Procedure
+    1. Create feature branch...
+    2. Stage and commit changes...
+    3. Push and open PR...
+    ## Rules
+    - Never force-push.
+    - Use conventional commit format.
+
+Per-agent filtering via spec.agents[].tools.skills allowlists.
+Scaffold with: zil init my-agent --skills fd-submit-changes,fd-run-tests
+
+---
+
+## Multi-Agent
+
+Declare sub-agents in spec.agents. Each gets its own identity, model,
+MCP servers, and skills. The SDK wraps them as AgentTool instances.
+
+    spec:
+      agents:
+        - name: vta
+          role: planner
+          description: Plans tasks. Never modifies code.
+          identity: ./agents/vta/identity
+          llm:
+            model: gemini-2.5-flash
+            model_env_var: VTA_MODEL
+          tools:
+            mcp_servers: [jira, github]
+            skills: [fd-explore-repo]
+        - name: vtd
+          role: executor
+          description: Executes the plan.
+          identity: ./agents/vtd/identity
+          tools:
+            mcp_servers: [jira, github]
+            skills: [fd-submit-changes, fd-run-tests]
+
+Project layout for multi-agent:
+    my-agent/
+    ├── agents/
+    │   ├── vta/identity/     persona.md, instructions.md, guardrails.yaml
+    │   └── vtd/identity/     persona.md, instructions.md, guardrails.yaml
+    ├── skills/               shared skills
+    ├── identity/             root agent identity
+    └── manifest.yaml
+
+Scaffold with: zil init my-agent --agents vta,vtd --service webhook
+
+---
+
+## Runtime Dependencies
+
+Declare non-Python runtime deps in spec.runtime.dependencies:
+
+    spec:
+      runtime:
+        dependencies:
+          - name: git
+            type: apt
+          - name: nodejs
+            type: apt-nodesource
+            version: "20"
+          - name: gh
+            type: apt-gh
+          - name: pnpm
+            type: npm-global
+
+Dependency types:
+    apt             apt-get install (standard Debian packages)
+    apt-nodesource  Node.js via NodeSource (version = major version)
+    apt-gh          GitHub CLI via official apt repo
+    pip             pip install (non-requirements.txt packages)
+    npm-global      npm install -g (requires apt-nodesource declared first)
+
+Installation order: apt → apt-nodesource → apt-gh → pip → npm-global.
+curl/ca-certificates/gnupg auto-injected when needed.
+
+zil web --docker regenerates Dockerfile from manifest before every build.
+zil deploy generates custom Dockerfile with ordered RUN stanzas.
+
+Preferred over spec.tools.host_dependencies for new projects.
+host_dependencies kept for backward compatibility.
+
+---
+
 ## Evaluation
 
 ### Eval suite (evals/baseline.yaml)
@@ -531,20 +796,24 @@ ADK emits spans for: agent invocation, LLM generate_content, tool execution.
     # Console output (no infra needed)
     zil run --trace-console
 
-    # Local Jaeger
-    docker run -d -p 16686:16686 -p 4318:4318 jaegertracing/jaeger:latest
-    export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces
+    # Full observability stack (Grafana OTEL-LGTM)
+    zil web --docker --trace
+
+    # Manual OTLP setup
+    export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318
     zil run --trace
 
 ### Production
 
-Set OTEL_EXPORTER_OTLP_TRACES_ENDPOINT in .env to your collector URL.
-The SDK picks it up automatically via zil.create_agent().
+    zil deploy --project my-project --region us-central1 --trace
+    # Spans go to Google Cloud Trace
+
+Or set OTEL_EXPORTER_OTLP_TRACES_ENDPOINT in .env for other backends.
 
 ### Compatible backends
 
-Jaeger, Google Cloud Trace, Datadog, Honeycomb, Grafana Tempo — any
-OTLP-compatible backend.
+Google Cloud Trace, Grafana OTEL-LGTM, Datadog, Honeycomb, Grafana Cloud,
+Jaeger — any OTLP-compatible backend.
 
 ---
 
@@ -583,8 +852,8 @@ Pipeline: zil pack → zil push → zil deploy --from
 
 Archive contents:
     manifest.yaml, adapters/, identity/, evals/, observability/,
-    my_agent/ (code), BUILD_META.json, SBOM.cyclonedx.json,
-    EVAL_RESULTS.json (if evals ran)
+    my_agent/ (code), tools/ (if MCP sources), skills/ (if skills),
+    BUILD_META.json, SBOM.cyclonedx.json, EVAL_RESULTS.json (if evals ran)
 
 BUILD_META.json includes env_coverage:
     { "declared": [...], "resolved_locally": [...], "missing_locally": [...] }
@@ -594,16 +863,26 @@ BUILD_META.json includes env_coverage:
 ## Project Layout
 
     my-agent/
-    ├── manifest.yaml              Zil agent manifest (includes spec.env)
+    ├── manifest.yaml              Zil agent manifest
     ├── my_agent/
     │   ├── __init__.py
     │   ├── agent.py               Agent entry point (uses zil.create_agent)
+    │   ├── app.py                 (webhook) FastAPI entry point
+    │   ├── runner.py              (webhook) Execution runner
     │   ├── .env.local             Local dev env vars (gitignored)
     │   └── .env.example           API key template
+    ├── agents/                    Sub-agent identity directories (multi-agent)
+    │   ├── vta/identity/
+    │   └── vtd/identity/
+    ├── skills/                    Reusable agent skills (SKILL.md files)
+    │   ├── fd-explore-repo/
+    │   └── fd-submit-changes/
+    ├── tools/                     MCP server sources (bundled at pack/deploy)
+    │   └── jira/
     ├── adapters/
     │   ├── llm.yaml               LLM provider config
     │   └── embed.yaml             Embedding provider config
-    ├── identity/
+    ├── identity/                  Root agent identity
     │   ├── persona.md             Agent persona
     │   ├── instructions.md        Behavior instructions
     │   └── guardrails.yaml        Hard rules and constraints
@@ -612,7 +891,7 @@ BUILD_META.json includes env_coverage:
     │   └── cases/                 Eval test cases
     ├── observability/
     │   └── config.yaml            OpenTelemetry config
-    ├── Dockerfile                 Container build
+    ├── Dockerfile                 Container build (auto-generated)
     ├── requirements.txt           Python dependencies
     └── .github/workflows/         CI/CD pipeline
 
