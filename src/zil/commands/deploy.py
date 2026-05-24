@@ -223,6 +223,7 @@ def _deploy_with_mcp_deps(
     cloud_sql_instance: str | None = None,
     runtime_deps: list[dict] | None = None,
     memory: str = "1Gi",
+    cpu: str = "1",
 ) -> int:
     """Deploy with a custom Dockerfile that installs host dependencies."""
     import importlib.metadata
@@ -267,6 +268,7 @@ def _deploy_with_mcp_deps(
         f"--project={project}",
         f"--region={region}",
         "--port=8000",
+        f"--cpu={cpu}",
         f"--memory={memory}",
         "--timeout=3600",
         "--concurrency=80",
@@ -389,6 +391,7 @@ def _deploy_cloud_run(
     env_vars: dict[str, str] | None = None,
     allow_unauthenticated: bool = False,
     memory: str = "1Gi",
+    cpu: str = "1",
 ) -> dict[str, Any]:
     """Deploy to Cloud Run via adk deploy cloud_run."""
     service_name = service or agent_name
@@ -447,6 +450,7 @@ def _deploy_cloud_run(
             cloud_sql_instance=cloud_sql_instance,
             runtime_deps=runtime_deps,
             memory=memory,
+            cpu=cpu,
         )
     else:
         if not shutil.which("adk"):
@@ -590,6 +594,11 @@ def _deploy_cloud_run(
     help="Cloud Run memory limit (default: 1Gi). Examples: 512Mi, 1Gi, 2Gi.",
 )
 @click.option(
+    "--cpu",
+    type=str, default="1",
+    help="CPU allocation (default: 1). Must satisfy memory constraints.",
+)
+@click.option(
     "--output", "output_format",
     type=click.Choice(["text", "json"], case_sensitive=False),
     default="text",
@@ -607,6 +616,7 @@ def deploy(
     env_file: Path | None,
     allow_unauthenticated: bool,
     memory: str,
+    cpu: str,
     output_format: str,
 ) -> None:
     """Deploy the agent to Cloud Run."""
@@ -614,7 +624,7 @@ def deploy(
     if from_ref:
         result = _deploy_from_artifact(
             from_ref, gcp_project, gcp_region, service, trace, with_ui, env_file,
-            allow_unauthenticated, memory=memory,
+            allow_unauthenticated, memory=memory, cpu=cpu,
         )
         _emit_deploy_result(result, output_format)
         return
@@ -667,7 +677,7 @@ def deploy(
     deploy_result = _deploy_cloud_run(
         project_dir, agent_name, module_dir,
         project, region, service, trace, with_ui, env_vars,
-        allow_unauthenticated, memory=memory,
+        allow_unauthenticated, memory=memory, cpu=cpu,
     )
     _emit_deploy_result(deploy_result, output_format)
 
@@ -682,6 +692,7 @@ def _deploy_from_artifact(
     env_file: Path | None = None,
     allow_unauthenticated: bool = False,
     memory: str = "1Gi",
+    cpu: str = "1",
 ) -> dict[str, Any]:
     """Deploy from a .zil archive or OCI registry reference."""
     import tempfile
@@ -752,5 +763,5 @@ def _deploy_from_artifact(
     return _deploy_cloud_run(
         project_dir, agent_name, module_dir,
         project, region, service, trace, with_ui, env_vars,
-        allow_unauthenticated, memory=memory,
+        allow_unauthenticated, memory=memory, cpu=cpu,
     )
