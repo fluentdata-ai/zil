@@ -25,6 +25,8 @@ _MODEL_MAP: dict[tuple[str, str], str] = {
     ("vertex-ai", "gemini-2.0-flash"): "gemini-2.0-flash",
     ("vertex-ai", "gemini-2.5-flash"): "gemini-2.5-flash-preview-05-20",
     ("vertex-ai", "gemini-2.5-pro"): "gemini-2.5-pro-preview-05-06",
+    ("vertex-ai", "gemini-3.5-flash"): "gemini-3.5-flash",
+    ("gemini", "gemini-3.5-flash"): "gemini-3.5-flash",
 }
 
 
@@ -58,6 +60,7 @@ def create_agent(
     description: str | None = None,
     model: str | None = None,
     instruction: str | None = None,
+    thinking_budget: int | None = None,
     enable_telemetry: bool = True,
     enable_guardrails: bool = True,
     enable_cost_tracking: bool = True,
@@ -76,6 +79,11 @@ def create_agent(
         description: Override the description from the manifest.
         model: Override the model string from the adapter config.
         instruction: Override the composed instruction entirely.
+        thinking_budget: Override thinking token budget from the manifest.
+            Set to an integer to enable Gemini thinking mode with that
+            many tokens allocated for chain-of-thought reasoning.
+            ``None`` (default) falls back to ``spec.thinking_budget``
+            in the manifest.
         enable_telemetry: Wire up OTel tracing from observability config
             (default ``True``).  Set to ``False`` in tests or when
             managing OTel providers yourself.
@@ -202,12 +210,18 @@ def create_agent(
             len(agent_tools),
         )
 
+    # Build generate_content_config with thinking if configured
+    generate_content_config = _build_generate_content_config(
+        thinking_budget=thinking_budget or ctx.thinking_budget,
+    )
+
     agent = LlmAgent(
         model=resolved_model,
         name=resolved_name,
         description=description or ctx.description,
         instruction=resolved_instruction,
         tools=all_tools,
+        generate_content_config=generate_content_config,
     )
 
     # Attach the guardrail callback to the agent for direct access
@@ -219,6 +233,39 @@ def create_agent(
     agent._zil_cost = cost_callback  # type: ignore[attr-defined]
 
     return agent
+
+
+def _build_generate_content_config(
+    thinking_budget: int | None = None,
+) -> Any:
+    """Build a GenerateContentConfig with optional thinking support.
+
+    Returns a ``types.GenerateContentConfig`` suitable for passing to
+    ``LlmAgent(generate_content_config=...)``.  When *thinking_budget*
+    is set, the config includes a ``ThinkingConfig`` that enables
+    Gemini's chain-of-thought reasoning with the given token budget.
+    """
+    if thinking_budget is None or thinking_budget <= 0:
+        return None
+
+    try:
+        from google.genai import types
+    except ImportError:
+        logger.warning(
+            "google-genai not installed — thinking_budget=%d ignored",
+            thinking_budget,
+        )
+        return None
+
+    logger.info(
+        "Thinking mode enabled — budget: %d tokens",
+        thinking_budget,
+    )
+    return types.GenerateContentConfig(
+        thinking_config=types.ThinkingConfig(
+            thinking_budget=thinking_budget,
+        ),
+    )
 
 
 def _load_skills(skills_dir: Any) -> dict[str, Any]:
@@ -350,12 +397,18 @@ def _build_sub_agents(ctx: Any, *, enable_mcp: bool = True) -> list[Any]:
                     spec.name,
                 )
 
+        # Propagate thinking config from root to sub-agents
+        sub_gen_config = _build_generate_content_config(
+            thinking_budget=ctx.thinking_budget,
+        )
+
         sub_agent = LlmAgent(
             model=sub_model,
             name=spec.name,
             description=spec.description,
             instruction=sub_instruction,
             tools=sub_mcp_toolsets + skill_toolset,
+            generate_content_config=sub_gen_config,
         )
 
         agent_tools.append(AgentTool(agent=sub_agent))

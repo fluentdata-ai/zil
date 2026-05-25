@@ -54,6 +54,7 @@ All parameters are optional — by default, everything is read from the project 
 | `description` | `str` | from manifest | Override description |
 | `model` | `str` | from adapter | Override model string |
 | `instruction` | `str` | composed | Override the entire instruction |
+| `thinking_budget` | `int` | from manifest | Token budget for Gemini thinking mode. Enables chain-of-thought reasoning when set. Falls back to `spec.thinking_budget` in manifest |
 | `enable_telemetry` | `bool` | `True` | Auto-setup OTel tracing from `observability/config.yaml` |
 | `enable_guardrails` | `bool` | `True` | Load runtime guardrail engine from `identity/guardrails.yaml` |
 | `enable_cost_tracking` | `bool` | `True` | Track token usage and enforce budgets from `spec.cost` |
@@ -92,6 +93,7 @@ The SDK maps `adapters/llm.yaml` to ADK model strings:
 | `anthropic` | `claude-sonnet-4-20250514` | `anthropic/claude-sonnet-4-20250514` |
 | `openai` | `gpt-4o` | `openai/gpt-4o` |
 | `vertex-ai` | `gemini-2.0-flash` | `gemini-2.0-flash` |
+| `gemini` / `vertex-ai` | `gemini-3.5-flash` | `gemini-3.5-flash` |
 
 Anthropic and OpenAI use the [LiteLLM](https://docs.litellm.ai/) prefix convention. Vertex/Gemini models are passed directly (ADK native).
 
@@ -118,6 +120,11 @@ You can override any resolved value:
 # Use a different model for testing
 agent = zil.create_agent(
     model="openai/gpt-4o-mini",
+)
+
+# Enable Gemini thinking mode with a 2048-token budget
+agent = zil.create_agent(
+    thinking_budget=2048,
 )
 
 # Completely replace the instruction
@@ -241,6 +248,7 @@ ctx.tools_config       # dict | None — spec.tools (MCP servers, host deps)
 ctx.agents             # list[AgentSpec] — spec.agents entries
 ctx.service_config     # dict | None — spec.runtime.service
 ctx.skills_dir         # Path | None — resolved spec.skills directory
+ctx.thinking_budget    # int | None — spec.thinking_budget (Gemini thinking mode)
 ctx.runtime_deps       # list[dict] — spec.runtime.dependencies entries
 ```
 

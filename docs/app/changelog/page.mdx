@@ -5,6 +5,19 @@ All notable changes to the `zil-ai` package are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.18](https://github.com/fluentdata-co/zil/compare/v0.1.17...v0.1.18) — 2026-05-25
+
+### Added
+
+- **`spec.thinking_budget`** — new manifest field to enable Gemini's chain-of-thought thinking mode. Set to an integer (token budget) to have the model emit `thought` parts in its SSE stream, enabling real-time reasoning visibility in UIs. Propagates to all sub-agents automatically.
+- **`thinking_budget` parameter in `create_agent()`** — programmatic override for the manifest field. Pass `thinking_budget=2048` to enable thinking mode without modifying the manifest.
+- **Gemini 3.5 Flash model mapping** — added `gemini-3.5-flash` to the model resolution table for both `gemini` and `vertex-ai` providers.
+- **`zil deploy --cpu`** — new CLI option to set Cloud Run CPU allocation (default: `1`). Accepts standard Cloud Run CPU values like `1`, `2`, `4`.
+
+### Changed
+
+- **`_build_generate_content_config()` helper** — new internal function that builds `GenerateContentConfig` with `ThinkingConfig` when a thinking budget is configured. Gracefully degrades when `google-genai` is not installed.
+
 ## [0.1.17](https://github.com/fluentdata-co/zil/compare/v0.1.16...v0.1.17) — 2026-05-23
 
 ### Added

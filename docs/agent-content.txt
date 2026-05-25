@@ -2,7 +2,7 @@
 # https://getzil.dev/docs
 # Source: https://github.com/fluentdata-co/zil
 # Package: pip install zil-ai
-# Version: 0.1.17
+# Version: 0.1.18
 
 ## Overview
 
@@ -213,6 +213,7 @@ Options:
     --skip-evals             Skip pre-deploy eval check
     --allow-unauthenticated  Allow unauthenticated access to the Cloud Run service
     --memory TEXT            Cloud Run memory limit (default: 1Gi)
+    --cpu TEXT               Cloud Run CPU allocation (default: 1)
     --output text | json     Output format (json for CI pipelines)
 
 What happens during deploy:
@@ -254,6 +255,7 @@ JSON output (--output json):
         description=None,      # str — override description
         model=None,            # str — override model string
         instruction=None,      # str — override composed instruction
+        thinking_budget=None,  # int | None — Gemini thinking mode token budget
         enable_telemetry=True, # bool — auto-setup OTel tracing
         enable_guardrails=True,# bool — load & enforce guardrails at runtime
         enable_cost_tracking=True, # bool — track token usage from spec.cost
@@ -270,6 +272,7 @@ Returns a google.adk.agents.LlmAgent with:
 - Sub-agents built from spec.agents (each with own identity, model, tools)
 - Skills loaded from spec.skills dir, filtered per sub-agent
 - Runtime deps parsed from spec.runtime.dependencies (ProjectContext.runtime_deps)
+- Thinking config from spec.thinking_budget (propagated to all sub-agents)
 
 ### zil.config
 
@@ -376,6 +379,7 @@ Returns True if installed.
     ctx.agents             # list[AgentSpec] — spec.agents entries
     ctx.service_config     # dict | None — spec.runtime.service
     ctx.skills_dir         # Path | None — resolved spec.skills directory
+    ctx.thinking_budget    # int | None — Gemini thinking mode token budget
     ctx.runtime_deps       # list[dict] — spec.runtime.dependencies entries
 
 runtime_deps format:
@@ -414,6 +418,7 @@ runtime_deps format:
             type: apt-gh
           - name: pnpm
             type: npm-global
+      thinking_budget: 2048            # Gemini thinking mode (optional)
       identity: ./identity
       skills: ./skills                  # path to skills directory
       evals: ./evals

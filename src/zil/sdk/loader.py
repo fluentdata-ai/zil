@@ -47,6 +47,7 @@ class ProjectContext:
         service_config: dict[str, Any] | None = None,
         skills_dir: Path | None = None,
         runtime_deps: list[dict[str, Any]] | None = None,
+        thinking_budget: int | None = None,
     ) -> None:
         self.project_dir = project_dir
         self.manifest = manifest
@@ -60,6 +61,7 @@ class ProjectContext:
         self.service_config = service_config
         self.skills_dir: Path | None = skills_dir
         self.runtime_deps: list[dict[str, Any]] = runtime_deps or []
+        self.thinking_budget: int | None = thinking_budget
 
     @property
     def name(self) -> str:
@@ -127,6 +129,7 @@ def load_project(project_dir: Path | None = None) -> ProjectContext:
     env_declarations = manifest.get("spec", {}).get("env", [])
     cost_config = manifest.get("spec", {}).get("cost")
     runtime_deps = manifest.get("spec", {}).get("runtime", {}).get("dependencies", [])
+    thinking_budget = manifest.get("spec", {}).get("thinking_budget")
 
     return ProjectContext(
         project_dir=root,
@@ -141,6 +144,7 @@ def load_project(project_dir: Path | None = None) -> ProjectContext:
         service_config=service_config,
         skills_dir=skills_dir,
         runtime_deps=runtime_deps,
+        thinking_budget=int(thinking_budget) if thinking_budget is not None else None,
     )
 
 
