@@ -8,11 +8,13 @@ registry and can be selected with ``runtime.framework: stub``.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from zil.sdk.frameworks.base import AgentSpec
+from zil.sdk.session import SessionEvent
 
 logger = logging.getLogger(__name__)
 
@@ -72,3 +74,23 @@ class StubBackend:
     def scaffold_config(self) -> dict[str, Any] | None:
         """Stub does not provide scaffold templates."""
         return None
+
+    async def invoke(
+        self,
+        agent: StubWiredAgent,
+        message: str,
+        *,
+        session_id: str | None = None,
+        workspace: str | Path | None = None,
+    ) -> AsyncIterator[SessionEvent]:
+        """Yield a canned response — useful for testing Session without a real LLM."""
+        logger.info(
+            "StubBackend.invoke() called (session=%s, message=%r)",
+            session_id,
+            message[:80],
+        )
+        yield SessionEvent(type="text", text=f"[stub] Received: {message}")
+        yield SessionEvent(
+            type="done",
+            metadata={"token_usage": {"prompt": 10, "completion": 5, "total": 15}},
+        )

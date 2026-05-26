@@ -1,0 +1,1 @@
+zil-ai[serve,openhands]

@@ -8,7 +8,7 @@ framework-specific logic leaking into ``create_agent`` or the CLI commands.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from zil.schema.loader import CheckResult
     from zil.sdk.loader import ProjectContext
+    from zil.sdk.session import SessionEvent
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,31 @@ class FrameworkBackend(Protocol):
         Returns a dict with keys like ``module_template``, ``dockerfile``,
         ``identity_defaults``, etc. Returns ``None`` if the backend does
         not provide scaffold support.
+        """
+        ...
+
+    def invoke(
+        self,
+        agent: WiredAgent,
+        message: str,
+        *,
+        session_id: str | None = None,
+        workspace: str | Path | None = None,
+    ) -> AsyncIterator[SessionEvent]:
+        """Send a message to the agent and yield response events.
+
+        This is the core invocation method used by ``zil.Session``.
+        Backends must implement this as an async generator that yields
+        ``SessionEvent`` instances as the agent processes the message.
+
+        Args:
+            agent: The wired agent to invoke.
+            message: User message or task description.
+            session_id: Session identifier for multi-turn conversations.
+            workspace: Working directory for file-operating agents.
+
+        Yields:
+            ``SessionEvent`` instances in order of production.
         """
         ...
 

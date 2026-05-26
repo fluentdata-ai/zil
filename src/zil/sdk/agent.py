@@ -46,6 +46,7 @@ def create_agent(
     enable_guardrails: bool = True,
     enable_cost_tracking: bool = True,
     enable_mcp: bool = True,
+    raw: bool = False,
 ) -> Any:
     """Create an agent wired from the Zil project manifest.
 
@@ -75,9 +76,12 @@ def create_agent(
         enable_mcp: Auto-connect to MCP servers declared in
             ``spec.tools.mcp_servers`` (default ``True``).  Set to ``False``
             in tests or when wiring MCP toolsets manually.
+        raw: If ``True``, return the ``WiredAgent`` handle instead of the
+            inner framework object.  Use this with ``zil.Session``.
 
     Returns:
-        The underlying framework agent object (e.g. ``LlmAgent`` for ADK).
+        The underlying framework agent object (e.g. ``LlmAgent`` for ADK),
+        or a ``WiredAgent`` if ``raw=True``.
     """
     from zil.sdk.frameworks import AgentSpec, registry
 
@@ -188,5 +192,7 @@ def create_agent(
     backend = registry.get(ctx.framework)
     wired = backend.wire(agent_spec)
 
-    # Return the inner framework object for backward compatibility
+    # Return WiredAgent for Session API, or inner for backward compat
+    if raw:
+        return wired
     return wired.inner

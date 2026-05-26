@@ -226,6 +226,58 @@ CMD adk {command} --port=8000 --host=0.0.0.0{trace_flag} "/app/agents"
 """
 
 
+def generate_serve_dockerfile(
+    *,
+    host_deps: list[str] | None = None,
+    runtime_deps: list[dict] | None = None,
+    framework: str = "adk",
+    port: int = 8000,
+) -> str:
+    """Generate a Dockerfile for unified deploy using ``zil serve`` as entrypoint.
+
+    This is the framework-agnostic deploy path. The container installs
+    the project, then starts ``zil serve`` which handles REST, webhooks,
+    and A2A endpoints regardless of framework backend.
+
+    Args:
+        host_deps: Legacy system packages from spec.tools.host_dependencies.
+        runtime_deps: Structured deps from spec.runtime.dependencies.
+        framework: Framework backend name (for optional dep group).
+        port: Port to expose (default 8000).
+    """
+    apt_block = _apt_install_block(host_deps or [])
+    rt_block = _runtime_deps_block(runtime_deps or [])
+
+    # Determine extra pip install for framework
+    extras = f"zil-ai[serve,{framework}]" if framework != "stub" else "zil-ai[serve]"
+
+    return f"""\
+FROM python:3.12-slim
+WORKDIR /app
+
+# Create a non-root user
+RUN adduser --disabled-password --gecos "" appuser
+{apt_block}{rt_block}
+# Switch to non-root user
+USER appuser
+ENV PATH="/home/appuser/.local/bin:$PATH"
+
+# Install project dependencies
+COPY --chown=appuser:appuser requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install zil with serve + framework extras
+RUN pip install --no-cache-dir {extras}
+
+# Copy project files
+COPY --chown=appuser:appuser . .
+
+EXPOSE {port}
+
+CMD ["zil", "serve", "--port", "{port}", "--host", "0.0.0.0"]
+"""
+
+
 def read_host_deps(manifest_or_path: dict | Path) -> list[str]:
     """Extract host_dependencies from a manifest dict or file path."""
     if isinstance(manifest_or_path, Path):

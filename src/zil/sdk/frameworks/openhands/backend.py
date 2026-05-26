@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -353,6 +355,62 @@ class OpenHandsBackend:
             servers[name] = server_entry
 
         return {"mcpServers": servers} if servers else {}
+
+    async def invoke(
+        self,
+        agent: Any,
+        message: str,
+        *,
+        session_id: str | None = None,
+        workspace: str | Path | None = None,
+    ) -> AsyncIterator:
+        """Invoke the OpenHands agent and yield SessionEvents.
+
+        Uses OpenHands' Conversation API to send a message and maps
+        the results to framework-neutral SessionEvent instances.
+        """
+        from zil.sdk.session import SessionEvent
+
+        try:
+            from openhands.sdk import Conversation
+        except ImportError:
+            yield SessionEvent(
+                type="error",
+                text="openhands-sdk is required. Install with: pip install 'zil-ai[openhands]'",
+            )
+            return
+
+        sid = session_id or uuid.uuid4().hex
+        ws = str(workspace) if workspace else str(Path.cwd())
+        oh_agent = agent._agent if hasattr(agent, "_agent") else agent
+
+        try:
+            conversation = Conversation(agent=oh_agent, workspace=ws)
+            try:
+                conversation.send_message(message)
+                result = conversation.run()
+
+                # Extract text from result
+                response_text = ""
+                if hasattr(result, "text"):
+                    response_text = result.text
+                elif isinstance(result, str):
+                    response_text = result
+                elif result is not None:
+                    response_text = str(result)
+
+                if response_text:
+                    yield SessionEvent(type="text", text=response_text)
+            finally:
+                conversation.close()
+
+        except Exception as exc:
+            yield SessionEvent(type="error", text=str(exc))
+
+        yield SessionEvent(
+            type="done",
+            metadata={"session_id": sid, "workspace": ws},
+        )
 
     def _wire_from_project(
         self, project_dir: Path, module_name: str | None = None

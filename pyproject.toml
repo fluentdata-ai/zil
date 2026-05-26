@@ -52,6 +52,11 @@ openhands = [
 eval = [
     "deepeval>=2.0,<3",
 ]
+serve = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.24.0",
+    "a2a-sdk>=1.0",
+]
 
 [project.scripts]
 zil = "zil.cli:cli"

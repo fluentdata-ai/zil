@@ -1,0 +1,498 @@
+"""zil serve — run the agent as a REST/A2A server.
+
+Starts a FastAPI application that exposes the agent via:
+- REST endpoints (sessions API)
+- Manifest-declared webhooks
+- A2A protocol endpoints (Agent Card + tasks)
+- Health check
+"""
+
+import hashlib
+import hmac
+import json
+import logging
+import os
+import uuid
+from pathlib import Path
+from typing import Any, Optional
+
+import click
+import yaml
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# FastAPI app factory
+# ---------------------------------------------------------------------------
+
+
+def _create_app(
+    project_dir: Path,
+    *,
+    enable_a2a: bool = True,
+) -> Any:
+    """Build the FastAPI application from the project manifest."""
+    try:
+        from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request, status
+        from fastapi.responses import JSONResponse, StreamingResponse
+        from pydantic import BaseModel
+    except ImportError:
+        raise ImportError(
+            "FastAPI is required for 'zil serve'. "
+            "Install it with:  pip install 'zil-ai[serve]'"
+        ) from None
+
+    from zil.sdk.session import Session, SessionEvent
+
+    # ---- Load manifest ----------------------------------------------------
+    manifest_path = project_dir / "manifest.yaml"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"manifest.yaml not found in {project_dir}")
+
+    with open(manifest_path, encoding="utf-8") as f:
+        manifest = yaml.safe_load(f)
+
+    metadata = manifest.get("metadata", {})
+    agent_name = metadata.get("name", "zil-agent")
+    agent_version = metadata.get("version", "0.0.0")
+    agent_description = metadata.get("description", "")
+
+    # ---- Wire the agent ---------------------------------------------------
+    from zil.sdk.agent import create_agent
+
+    wired_agent = create_agent(project_dir=project_dir, raw=True)
+
+    # ---- Session store (in-memory) ----------------------------------------
+    sessions: dict = {}
+
+    # ---- Request models ---------------------------------------------------
+    class CreateSessionBody(BaseModel):
+        workspace: Optional[str] = None
+
+    class SendMessageBody(BaseModel):
+        message: str
+
+    class InvokeBody(BaseModel):
+        message: str
+        workspace: Optional[str] = None
+
+    class A2AMessagePart(BaseModel):
+        type: str = "text"
+        text: str = ""
+
+    class A2AMessage(BaseModel):
+        parts: list = []
+
+    class A2ATaskRequest(BaseModel):
+        id: Optional[str] = None
+        message: Optional[A2AMessage] = None
+
+    # ---- Build FastAPI app ------------------------------------------------
+    app = FastAPI(
+        title=f"{agent_name} — Zil Agent Server",
+        version=agent_version,
+        description=agent_description,
+    )
+
+    # Store references on app state
+    app.state.wired_agent = wired_agent
+    app.state.project_dir = project_dir
+
+    # ---- Health check -----------------------------------------------------
+    @app.get("/health")
+    async def health():
+        return {"status": "ok", "agent": agent_name, "version": agent_version}
+
+    # ---- Session endpoints ------------------------------------------------
+    @app.post("/sessions", status_code=201)
+    async def create_session_endpoint(body: CreateSessionBody = CreateSessionBody()):
+        """Create a new session. Optionally accepts workspace in body."""
+        workspace = body.workspace or str(project_dir)
+        session_id = uuid.uuid4().hex
+
+        session = Session(
+            wired_agent,
+            workspace=workspace,
+            session_id=session_id,
+        )
+        sessions[session_id] = session
+        return {"session_id": session_id, "workspace": workspace}
+
+    @app.post("/sessions/{session_id}/messages")
+    async def send_message(session_id: str, body: SendMessageBody):
+        """Send a message to an existing session and get the full response."""
+        if session_id not in sessions:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        if not body.message:
+            raise HTTPException(status_code=400, detail="'message' field is required")
+
+        session = sessions[session_id]
+        response = await session.send(body.message)
+        return {
+            "session_id": session_id,
+            "text": response.text,
+            "events": [
+                {
+                    "type": ev.type,
+                    "text": ev.text,
+                    "tool_name": ev.tool_name,
+                    "args": ev.args,
+                }
+                for ev in response.events
+            ],
+            "token_usage": response.token_usage,
+        }
+
+    @app.get("/sessions/{session_id}/stream")
+    async def stream_session(session_id: str, message: str = Query(default="")):
+        """SSE stream — send a message via query param and stream events."""
+        if session_id not in sessions:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        if not message:
+            raise HTTPException(status_code=400, detail="'message' query param required")
+
+        session = sessions[session_id]
+
+        async def event_generator():
+            async for event in session.stream(message):
+                data = json.dumps({
+                    "type": event.type,
+                    "text": event.text,
+                    "tool_name": event.tool_name,
+                })
+                yield f"data: {data}\n\n"
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+        )
+
+    @app.delete("/sessions/{session_id}")
+    async def close_session(session_id: str):
+        """Close and delete a session."""
+        if session_id not in sessions:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        session = sessions.pop(session_id)
+        await session.close()
+        return {"status": "closed", "session_id": session_id}
+
+    # ---- Quick invoke (stateless) -----------------------------------------
+    @app.post("/invoke")
+    async def invoke_endpoint(body: InvokeBody):
+        """Stateless invoke — creates a session, sends message, closes."""
+        if not body.message:
+            raise HTTPException(status_code=400, detail="'message' field is required")
+
+        workspace = body.workspace or str(project_dir)
+        session = Session(wired_agent, workspace=workspace)
+        try:
+            response = await session.send(body.message)
+        finally:
+            await session.close()
+
+        return {
+            "text": response.text,
+            "session_id": response.session_id,
+            "token_usage": response.token_usage,
+        }
+
+    # ---- Manifest-declared webhooks ---------------------------------------
+    service_cfg = manifest.get("spec", {}).get("runtime", {}).get("service", {})
+    webhooks = service_cfg.get("webhooks", [])
+
+    for wh_cfg in webhooks:
+        wh_name = wh_cfg.get("name", "")
+        wh_path = wh_cfg.get("path", f"/webhooks/{wh_name}")
+        sig_header = wh_cfg.get("signature_header")
+        algorithm = wh_cfg.get("algorithm", "sha256")
+        secret_env = wh_cfg.get("secret_env", "")
+
+        _register_webhook(
+            app,
+            name=wh_name,
+            path=wh_path,
+            signature_header=sig_header,
+            algorithm=algorithm,
+            secret_env=secret_env,
+            wired_agent=wired_agent,
+            project_dir=project_dir,
+            sessions=sessions,
+        )
+
+    # ---- A2A endpoints ---------------------------------------------------
+    if enable_a2a:
+        _register_a2a_endpoints(app, manifest, agent_name, agent_version, agent_description)
+
+    return app
+
+
+def _register_webhook(
+    app,
+    *,
+    name: str,
+    path: str,
+    signature_header,
+    algorithm: str,
+    secret_env: str,
+    wired_agent,
+    project_dir: Path,
+    sessions: dict,
+) -> None:
+    """Dynamically register a webhook endpoint on the app."""
+    from fastapi import BackgroundTasks, HTTPException, Request
+
+    from zil.sdk.session import Session
+
+    # Capture closure variables
+    _name = name
+    _sig_header = signature_header
+    _algorithm = algorithm
+    _secret_env = secret_env
+    _wired_agent = wired_agent
+    _project_dir = project_dir
+
+    @app.post(path, status_code=202, name=f"webhook_{_name}")
+    async def webhook_handler(request: Request, background: BackgroundTasks):
+        raw = await request.body()
+
+        # Signature verification
+        if _sig_header and _secret_env:
+            secret = os.environ.get(_secret_env, "")
+            if secret:
+                provided_sig = request.headers.get(_sig_header, "")
+                if "=" in provided_sig:
+                    provided_sig = provided_sig.split("=", 1)[1]
+                h = hmac.new(secret.encode(), raw, getattr(hashlib, _algorithm, hashlib.sha256))
+                expected = h.hexdigest()
+                if not hmac.compare_digest(expected, provided_sig):
+                    raise HTTPException(status_code=401, detail="Invalid signature")
+
+        # Parse payload and dispatch
+        try:
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+        # Generic dispatch: send payload as message to agent
+        msg = json.dumps(payload, indent=2)
+
+        async def _dispatch():
+            session = Session(_wired_agent, workspace=str(_project_dir))
+            try:
+                await session.send(f"Webhook '{_name}' received:\n{msg}")
+            finally:
+                await session.close()
+
+        background.add_task(_dispatch)
+        return {"status": "accepted", "webhook": _name}
+
+
+def _register_a2a_endpoints(
+    app,
+    manifest: dict,
+    agent_name: str,
+    agent_version: str,
+    agent_description: str,
+) -> None:
+    """Register A2A protocol endpoints (Agent Card + task management)."""
+    from fastapi import HTTPException, Request
+    from fastapi.responses import JSONResponse, StreamingResponse
+
+    from zil.sdk.session import Session
+
+    # Build Agent Card from manifest
+    agent_card = {
+        "name": agent_name,
+        "description": agent_description,
+        "url": "",
+        "version": agent_version,
+        "capabilities": {
+            "streaming": True,
+            "pushNotifications": False,
+        },
+        "defaultInputModes": ["text/plain"],
+        "defaultOutputModes": ["text/plain"],
+        "skills": [],
+    }
+
+    # Extract skills from manifest if declared
+    skills_path = manifest.get("spec", {}).get("skills")
+    if skills_path:
+        agent_card["skills"].append({
+            "id": "default",
+            "name": f"{agent_name} default skill",
+            "description": agent_description,
+        })
+
+    # In-memory task store
+    tasks: dict = {}
+
+    @app.get("/.well-known/agent.json")
+    async def agent_card_endpoint(request: Request):
+        """A2A Agent Card — describes this agent's capabilities."""
+        card = dict(agent_card)
+        scheme = request.headers.get("x-forwarded-proto", "http")
+        host = request.headers.get("host", "localhost")
+        card["url"] = f"{scheme}://{host}"
+        return JSONResponse(content=card)
+
+    @app.post("/tasks/send")
+    async def a2a_send_task(request: Request):
+        """A2A: Send a task (non-streaming)."""
+        body = await request.json()
+        task_id = body.get("id", uuid.uuid4().hex)
+        message_parts = body.get("message", {}).get("parts", [])
+        text_parts = [p.get("text", "") for p in message_parts if p.get("type") == "text"]
+        message_text = "\n".join(text_parts) if text_parts else json.dumps(body.get("message", {}))
+
+        tasks[task_id] = {"id": task_id, "status": {"state": "working"}}
+
+        wired = app.state.wired_agent
+        project = app.state.project_dir
+
+        session = Session(wired, workspace=str(project) if project else None)
+        try:
+            response = await session.send(message_text)
+        finally:
+            await session.close()
+
+        artifacts = [{"parts": [{"type": "text", "text": response.text}]}]
+        tasks[task_id] = {
+            "id": task_id,
+            "status": {"state": "completed"},
+            "artifacts": artifacts,
+        }
+        return JSONResponse(content={"id": task_id, "result": tasks[task_id]})
+
+    @app.post("/tasks/sendSubscribe")
+    async def a2a_send_subscribe(request: Request):
+        """A2A: Send a task with SSE streaming."""
+        body = await request.json()
+        task_id = body.get("id", uuid.uuid4().hex)
+        message_parts = body.get("message", {}).get("parts", [])
+        text_parts = [p.get("text", "") for p in message_parts if p.get("type") == "text"]
+        message_text = "\n".join(text_parts) if text_parts else json.dumps(body.get("message", {}))
+
+        wired = app.state.wired_agent
+        project = app.state.project_dir
+
+        session = Session(wired, workspace=str(project) if project else None)
+
+        async def event_stream():
+            yield f"data: {json.dumps({'id': task_id, 'status': {'state': 'working'}})}\n\n"
+            text_parts_out = []
+            try:
+                async for event in session.stream(message_text):
+                    if event.type == "text" and event.text:
+                        text_parts_out.append(event.text)
+                        yield f"data: {json.dumps({'id': task_id, 'status': {'state': 'working'}, 'artifact': {'parts': [{'type': 'text', 'text': event.text}]}})}\n\n"
+                    elif event.type == "tool_call":
+                        yield f"data: {json.dumps({'id': task_id, 'status': {'state': 'working', 'message': 'Calling tool: ' + str(event.tool_name)}})}\n\n"
+            finally:
+                await session.close()
+            full_text = "".join(text_parts_out)
+            yield f"data: {json.dumps({'id': task_id, 'status': {'state': 'completed'}, 'artifacts': [{'parts': [{'type': 'text', 'text': full_text}]}]})}\n\n"
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    @app.get("/tasks/{task_id}")
+    async def a2a_get_task(task_id: str):
+        """A2A: Get task status."""
+        if task_id not in tasks:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return JSONResponse(content=tasks[task_id])
+
+
+# ---------------------------------------------------------------------------
+# CLI command
+# ---------------------------------------------------------------------------
+
+
+@click.command()
+@click.option(
+    "--project-dir", "-d",
+    type=click.Path(exists=True, file_okay=False, resolve_path=True),
+    default=".",
+    help="Project root directory (default: current dir).",
+)
+@click.option(
+    "--port", "-p",
+    type=int,
+    default=8000,
+    help="Port to listen on (default: 8000).",
+)
+@click.option(
+    "--host",
+    type=str,
+    default="0.0.0.0",
+    help="Host to bind (default: 0.0.0.0).",
+)
+@click.option(
+    "--no-a2a",
+    is_flag=True,
+    default=False,
+    help="Disable A2A protocol endpoints.",
+)
+@click.option(
+    "--reload",
+    is_flag=True,
+    default=False,
+    help="Enable auto-reload for development.",
+)
+def serve(project_dir: str, port: int, host: str, no_a2a: bool, reload: bool) -> None:
+    """Start the agent as a REST/A2A server.
+
+    Exposes the agent via REST endpoints, manifest-declared webhooks,
+    and optionally the A2A protocol for agent-to-agent communication.
+    """
+    try:
+        import uvicorn
+    except ImportError:
+        click.echo(
+            "Error: uvicorn is required for 'zil serve'. "
+            "Install it with:  pip install 'zil-ai[serve]'",
+            err=True,
+        )
+        raise SystemExit(1) from None
+
+    from rich.console import Console
+
+    console = Console()
+    project_path = Path(project_dir)
+
+    # Validate manifest exists
+    if not (project_path / "manifest.yaml").is_file():
+        console.print("[red]Error:[/red] manifest.yaml not found.")
+        raise SystemExit(1)
+
+    console.print(f"[bold]zil serve[/bold] — starting agent server")
+    console.print(f"  Project: {project_path}")
+    console.print(f"  Port: {port}")
+    console.print(f"  A2A: {'enabled' if not no_a2a else 'disabled'}")
+    console.print()
+
+    app = _create_app(project_path, enable_a2a=not no_a2a)
+
+    console.print(f"  Endpoints:")
+    console.print(f"    GET  /health")
+    console.print(f"    POST /invoke")
+    console.print(f"    POST /sessions")
+    console.print(f"    POST /sessions/{{id}}/messages")
+    console.print(f"    GET  /sessions/{{id}}/stream")
+    if not no_a2a:
+        console.print(f"    GET  /.well-known/agent.json")
+        console.print(f"    POST /tasks/send")
+        console.print(f"    POST /tasks/sendSubscribe")
+    console.print()
+
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_level="info",
+        reload=reload,
+    )

@@ -538,6 +538,139 @@ def _deploy_cloud_run(
     )
 
 
+def _deploy_unified(
+    project_dir: Path,
+    agent_name: str,
+    project: str,
+    region: str,
+    service: str | None,
+    env_vars: dict[str, str] | None = None,
+    allow_unauthenticated: bool = False,
+    memory: str = "1Gi",
+    cpu: str = "1",
+) -> dict[str, Any]:
+    """Deploy using the unified path: Dockerfile with ``zil serve`` entrypoint.
+
+    This is framework-agnostic — works for ADK, OpenHands, or any backend.
+    The container runs ``zil serve`` which starts the agent as a REST/A2A server.
+    """
+    import tempfile
+
+    from zil.packaging.dockerfile import (
+        generate_serve_dockerfile,
+        read_host_deps,
+        read_runtime_deps,
+    )
+
+    service_name = service or agent_name
+    manifest_path = project_dir / "manifest.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text())
+
+    framework = manifest.get("spec", {}).get("runtime", {}).get("framework", "adk")
+    host_deps = read_host_deps(manifest)
+    runtime_deps = read_runtime_deps(manifest)
+
+    # Resolve Cloud SQL instance
+    cloud_sql_instance: str | None = None
+    session_uri = env_vars.get("SESSION_DB_URI") if env_vars else None
+    if not session_uri:
+        session_uri = os.environ.get("SESSION_DB_URI")
+    if session_uri and "/cloudsql/" in session_uri:
+        m = re.search(r"/cloudsql/([^/]+)/", session_uri)
+        if m:
+            cloud_sql_instance = m.group(1)
+
+    # Generate Dockerfile
+    dockerfile = generate_serve_dockerfile(
+        host_deps=host_deps,
+        runtime_deps=runtime_deps,
+        framework=framework,
+    )
+
+    # Stage project in a temp dir
+    temp_dir = tempfile.mkdtemp(prefix="zil_deploy_serve_")
+    temp_path = Path(temp_dir)
+
+    # Write Dockerfile
+    (temp_path / "Dockerfile").write_text(dockerfile)
+
+    # Copy entire project
+    ignore = shutil.ignore_patterns(
+        ".git", ".venv", "__pycache__", "*.pyc", ".ruff_cache", "node_modules"
+    )
+    shutil.copytree(project_dir, temp_path / "project", ignore=ignore, dirs_exist_ok=False)
+
+    # Move project files to root of temp dir for simpler COPY .
+    # (Dockerfile expects files at top level)
+    for item in (temp_path / "project").iterdir():
+        dest = temp_path / item.name
+        if not dest.exists():
+            shutil.move(str(item), str(dest))
+    shutil.rmtree(temp_path / "project", ignore_errors=True)
+
+    # Ensure requirements.txt exists
+    if not (temp_path / "requirements.txt").exists():
+        (temp_path / "requirements.txt").write_text("zil-ai[serve]\n")
+
+    console.print(
+        f"→ Deploying [bold]{service_name}[/bold] to Cloud Run "
+        f"(unified mode, framework={framework})..."
+    )
+
+    # Deploy via gcloud run deploy --source
+    cmd = [
+        "gcloud", "run", "deploy", service_name,
+        "--source", temp_dir,
+        f"--project={project}",
+        f"--region={region}",
+        "--port=8000",
+        f"--cpu={cpu}",
+        f"--memory={memory}",
+        "--timeout=3600",
+        "--concurrency=80",
+        "--max-instances=1",
+        "--session-affinity",
+    ]
+    if env_vars:
+        env_pairs = ",".join(f"{k}={v}" for k, v in env_vars.items())
+        cmd.append(f"--set-env-vars={env_pairs}")
+    if allow_unauthenticated:
+        cmd.append("--allow-unauthenticated")
+    if cloud_sql_instance:
+        cmd.append(f"--add-cloudsql-instances={cloud_sql_instance}")
+        console.print(
+            f"  Cloud SQL: attaching instance [bold]{cloud_sql_instance}[/bold]"
+        )
+
+    result = subprocess.call(cmd)
+
+    # Cleanup
+    shutil.rmtree(temp_dir, ignore_errors=True)
+
+    if result != 0:
+        console.print("[red]Error:[/red] Cloud Run deployment failed.")
+        raise SystemExit(1)
+
+    console.print(
+        f"\n[green]✓[/green] Deployed [bold]{service_name}[/bold] "
+        f"to Cloud Run (via zil serve)."
+    )
+    console.print("  Endpoints:")
+    console.print("    GET  /health")
+    console.print("    POST /invoke")
+    console.print("    POST /sessions")
+    console.print("    GET  /.well-known/agent.json")
+    console.print("    POST /tasks/send")
+
+    return _build_deploy_result(
+        manifest=manifest,
+        service_name=service_name,
+        project=project,
+        region=region,
+        cloud_sql_instance=cloud_sql_instance,
+    )
+
+
 @click.command()
 @click.option(
     "--project-dir",
@@ -607,6 +740,16 @@ def _deploy_cloud_run(
     default="text",
     help="Output format after deploy: 'text' (default) or 'json' (machine-readable).",
 )
+@click.option(
+    "--mode",
+    type=click.Choice(["auto", "serve", "legacy-adk"], case_sensitive=False),
+    default="auto",
+    help=(
+        "Deploy mode. 'auto' (default) uses 'serve' for non-ADK frameworks "
+        "and legacy ADK path for ADK agents. 'serve' forces the unified "
+        "zil-serve-based deployment. 'legacy-adk' forces the ADK CLI deploy."
+    ),
+)
 def deploy(
     project_dir: Path,
     gcp_project: str | None,
@@ -621,6 +764,7 @@ def deploy(
     memory: str,
     cpu: str,
     output_format: str,
+    mode: str,
 ) -> None:
     """Deploy the agent to Cloud Run."""
     # If --from is specified, deploy from artifact
@@ -689,11 +833,28 @@ def deploy(
         count = len(env_vars)
         console.print(f"[green]✓[/green] Resolved {count} env variable(s)")
 
-    deploy_result = _deploy_cloud_run(
-        project_dir, agent_name, module_dir,
-        project, region, service, trace, with_ui, env_vars,
-        allow_unauthenticated, memory=memory, cpu=cpu,
-    )
+    # Decide deploy path based on --mode and framework
+    use_unified = False
+    if mode == "serve":
+        use_unified = True
+    elif mode == "auto" and framework != "adk":
+        use_unified = True
+        console.print(
+            f"  Using unified deploy (framework={framework} → zil serve entrypoint)"
+        )
+
+    if use_unified:
+        deploy_result = _deploy_unified(
+            project_dir, agent_name,
+            project, region, service, env_vars,
+            allow_unauthenticated, memory=memory, cpu=cpu,
+        )
+    else:
+        deploy_result = _deploy_cloud_run(
+            project_dir, agent_name, module_dir,
+            project, region, service, trace, with_ui, env_vars,
+            allow_unauthenticated, memory=memory, cpu=cpu,
+        )
     _emit_deploy_result(deploy_result, output_format)
 
 

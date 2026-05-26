@@ -8,6 +8,8 @@ It is the ONLY module in the Zil SDK that imports ``google.adk``.
 from __future__ import annotations
 
 import logging
+import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -451,3 +453,77 @@ class AdkBackend:
             "dockerfile_base": "python:3.11-slim",
             "agent_entry": "agent.py",
         }
+
+    async def invoke(
+        self,
+        agent: AdkWiredAgent,
+        message: str,
+        *,
+        session_id: str | None = None,
+        workspace: str | Path | None = None,
+    ) -> AsyncIterator:
+        """Invoke the ADK agent and yield SessionEvents.
+
+        Uses ADK's Runner + InMemorySessionService to execute the agent
+        and maps ADK events to framework-neutral SessionEvent instances.
+        """
+        from zil.sdk.session import SessionEvent
+
+        try:
+            from google.adk.runners import Runner
+            from google.adk.sessions import InMemorySessionService
+            from google.genai import types
+        except ImportError:
+            yield SessionEvent(
+                type="error",
+                text="google-adk is required. Install with: pip install 'zil-ai[adk]'",
+            )
+            return
+
+        sid = session_id or uuid.uuid4().hex
+        user_id = f"zil-session-{sid}"
+        app_name = getattr(agent._agent, 'name', 'zil-agent')
+
+        session_service = InMemorySessionService()
+        runner = Runner(
+            agent=agent._agent,
+            app_name=app_name,
+            session_service=session_service,
+        )
+
+        content = types.Content(
+            role="user",
+            parts=[types.Part.from_text(text=message)],
+        )
+
+        text_parts: list[str] = []
+        try:
+            async for event in runner.run_async(
+                user_id=user_id,
+                session_id=sid,
+                new_message=content,
+            ):
+                # Map ADK event to SessionEvent
+                if hasattr(event, 'actions') and event.actions:
+                    for action in event.actions:
+                        fn_call = getattr(action, 'function_call', None)
+                        if fn_call:
+                            yield SessionEvent(
+                                type="tool_call",
+                                tool_name=fn_call.name if hasattr(fn_call, 'name') else str(fn_call),
+                                args=dict(fn_call.args) if hasattr(fn_call, 'args') and fn_call.args else None,
+                            )
+
+                if hasattr(event, 'is_final_response') and event.is_final_response():
+                    response_text = event.content.parts[0].text if event.content and event.content.parts else ""
+                    if response_text:
+                        text_parts.append(response_text)
+                        yield SessionEvent(type="text", text=response_text)
+
+        except Exception as exc:
+            yield SessionEvent(type="error", text=str(exc))
+
+        yield SessionEvent(
+            type="done",
+            metadata={"session_id": sid, "app_name": app_name},
+        )

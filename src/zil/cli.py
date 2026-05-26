@@ -11,6 +11,7 @@ from zil.commands.inspect import inspect
 from zil.commands.pack import pack
 from zil.commands.push import push
 from zil.commands.run import run
+from zil.commands.serve import serve
 from zil.commands.validate import validate
 from zil.commands.web import web
 
@@ -35,3 +36,4 @@ cli.add_command(web)
 cli.add_command(eval)
 cli.add_command(deploy)
 cli.add_command(push)
+cli.add_command(serve)
