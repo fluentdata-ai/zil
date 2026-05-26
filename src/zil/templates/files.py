@@ -81,6 +81,16 @@ spec:
 
 def _manifest_env_vars(c: InitConfig) -> str:
     """Generate the env var declarations block for the manifest template."""
+    # OpenHands uses LLM_API_KEY uniformly (LiteLLM convention)
+    if c.framework == "openhands":
+        lines = [
+            "    - name: LLM_API_KEY",
+            "      description: API key for the LLM provider (OpenAI, Anthropic, etc.)",
+            "      required: true",
+            "      secret: true",
+        ]
+        return "\n".join(lines)
+
     providers = {
         "gemini": ("GOOGLE_API_KEY", "Gemini API key"),
         "vertex": ("GOOGLE_APPLICATION_CREDENTIALS", "Path to GCP service account JSON"),
@@ -284,6 +294,23 @@ auth:
 # ---------------------------------------------------------------------------
 @_register("identity/persona.md")
 def _persona(c: InitConfig) -> str:
+    if c.framework == "openhands":
+        return f"""\
+# {c.name} — Persona
+
+You are **{c.name}**, a careful and methodical autonomous coding agent
+built with the Zil framework and powered by OpenHands.
+
+## Core traits
+- Plans before acting — reads and understands the task before writing code
+- Writes clean, well-structured code with appropriate tests
+- Verifies work compiles and runs before declaring a task complete
+- Makes atomic, logical commits
+
+## Tone
+Direct and technical. Focus on correctness and clarity.
+"""
+
     return f"""\
 # {c.name} — Persona
 
@@ -301,6 +328,24 @@ Professional but approachable. Avoid jargon unless the user demonstrates experti
 
 @_register("identity/instructions.md")
 def _instructions(c: InitConfig) -> str:
+    if c.framework == "openhands":
+        return f"""\
+# {c.name} — Instructions
+
+## Behavior rules
+1. Read and understand the task thoroughly before writing code.
+2. Break complex tasks into small, testable steps.
+3. Write tests alongside implementation when appropriate.
+4. Verify your changes compile/run before declaring done.
+5. Use git to commit logical, atomic changes.
+6. Never modify files outside the designated workspace.
+
+## Guardrails
+- Do not execute destructive shell commands without confirmation.
+- Do not install system-level packages — use project-level deps only.
+- Do not access external networks unless the task explicitly requires it.
+"""
+
     return f"""\
 # {c.name} — Instructions
 
@@ -514,6 +559,29 @@ def _agent_init(c: InitConfig) -> str:
 
 @_register(lambda c: f"{c.module_name}/agent.py")
 def _agent_py(c: InitConfig) -> str:
+    if c.framework == "openhands":
+        return f'''\
+"""
+{c.name} — Main agent entry point.
+
+Built with Zil (https://getzil.dev) using the OpenHands framework.
+Run locally:  zil run
+"""
+
+from pathlib import Path
+
+import zil
+
+
+# Create the agent. Zil reads manifest.yaml, identity/, and adapters/
+# automatically and wires them into an OpenHands Agent.
+# Built-in tools (terminal, file_editor) are included by default.
+root_agent = zil.create_agent(
+    tools=[],  # add custom tool functions here (MCP servers auto-wired from manifest)
+    project_dir=Path(__file__).parent,
+)
+'''
+
     return f'''\
 """
 {c.name} — Main agent entry point.
@@ -583,9 +651,10 @@ tools/*/docs/
 # ---------------------------------------------------------------------------
 @_register("requirements.txt")
 def _requirements(c: InitConfig) -> str:
+    extra = "openhands" if c.framework == "openhands" else "adk"
     lines = [
         f"# Core dependencies for {c.name}",
-        "zil-ai[adk]>=0.1.0",
+        f"zil-ai[{extra}]>=0.1.0",
         "pyyaml>=6.0",
         "opentelemetry-api>=1.20",
         "opentelemetry-sdk>=1.20",
@@ -603,9 +672,10 @@ def _requirements(c: InitConfig) -> str:
 # ---------------------------------------------------------------------------
 @_register(lambda c: f"{c.module_name}/requirements.txt")
 def _module_requirements(c: InitConfig) -> str:
+    extra = "openhands" if c.framework == "openhands" else "adk"
     lines = [
-        f"# Dependencies for {c.name} (used by adk deploy cloud_run)",
-        "zil-ai[adk]>=0.1.0",
+        f"# Dependencies for {c.name} (used by deploy)",
+        f"zil-ai[{extra}]>=0.1.0",
         "pyyaml>=6.0",
         "opentelemetry-api>=1.20",
         "opentelemetry-sdk>=1.20",

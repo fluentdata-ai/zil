@@ -1,7 +1,7 @@
 """Framework backend registry and exports.
 
 This package provides the ``FrameworkBackend`` abstraction, the global
-``registry``, and the built-in backends (ADK, Stub).
+``registry``, and the built-in backends (ADK, OpenHands, Stub).
 """
 
 from zil.sdk.frameworks.base import (
@@ -24,6 +24,14 @@ try:
     from zil.sdk.frameworks.adk.backend import AdkBackend
 
     registry.register(AdkBackend())
+except ImportError:
+    pass
+
+# Lazy-register OpenHandsBackend only if openhands-sdk is installed
+try:
+    from zil.sdk.frameworks.openhands.backend import OpenHandsBackend
+
+    registry.register(OpenHandsBackend())
 except ImportError:
     pass
 

@@ -441,7 +441,7 @@ class TestAuditCLI:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(
                 cli,
-                ["init", "audit-test", "--llm", "gemini", "--non-interactive"],
+                ["init", "audit-test", "--llm", "gemini", "--non-interactive", "--skip-install"],
                 catch_exceptions=False,
             )
             result = runner.invoke(
@@ -458,7 +458,7 @@ class TestAuditCLI:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(
                 cli,
-                ["init", "json-audit", "--llm", "gemini", "--non-interactive"],
+                ["init", "json-audit", "--llm", "gemini", "--non-interactive", "--skip-install"],
                 catch_exceptions=False,
             )
             result = runner.invoke(
@@ -475,7 +475,7 @@ class TestAuditCLI:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(
                 cli,
-                ["init", "fix-audit", "--llm", "gemini", "--non-interactive"],
+                ["init", "fix-audit", "--llm", "gemini", "--non-interactive", "--skip-install"],
                 catch_exceptions=False,
             )
             result = runner.invoke(

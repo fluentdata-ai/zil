@@ -66,6 +66,11 @@ SERVICE_MODES = ["none", "webhook"]
     is_flag=True,
     help="Use defaults for all prompts.",
 )
+@click.option(
+    "--skip-install",
+    is_flag=True,
+    help="Skip venv creation and dependency installation.",
+)
 def init(
     name: str,
     llm_provider: str | None,
@@ -77,6 +82,7 @@ def init(
     service_mode: str | None,
     framework_name: str | None,
     non_interactive: bool,
+    skip_install: bool,
 ) -> None:
     """Scaffold a new Zil agent project.
 
@@ -139,7 +145,8 @@ def init(
     _scaffold(project_dir, config)
     console.print()
 
-    _install_deps(project_dir, non_interactive)
+    if not skip_install:
+        _install_deps(project_dir, non_interactive)
 
     console.print()
     console.print("[green]Done![/green] Your agent is ready.")

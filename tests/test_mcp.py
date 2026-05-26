@@ -410,7 +410,7 @@ class TestInitMcp:
     def test_init_with_git_preset(self, tmp_path):
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(
-                cli, ["init", "git-agent", "--non-interactive", "--mcp", "git"],
+                cli, ["init", "git-agent", "--non-interactive", "--skip-install", "--mcp", "git"],
                 catch_exceptions=False,
             )
             assert result.exit_code == 0
@@ -422,7 +422,7 @@ class TestInitMcp:
     def test_init_with_filesystem_preset(self, tmp_path):
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(
-                cli, ["init", "fs-agent", "--non-interactive", "--mcp", "filesystem"],
+                cli, ["init", "fs-agent", "--non-interactive", "--skip-install", "--mcp", "filesystem"],
                 catch_exceptions=False,
             )
             assert result.exit_code == 0
@@ -433,7 +433,7 @@ class TestInitMcp:
     def test_init_without_mcp_has_commented_tools(self, tmp_path):
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(
-                cli, ["init", "no-mcp-agent", "--non-interactive"],
+                cli, ["init", "no-mcp-agent", "--non-interactive", "--skip-install"],
                 catch_exceptions=False,
             )
             assert result.exit_code == 0
@@ -443,7 +443,7 @@ class TestInitMcp:
     def test_init_git_dockerfile_has_apt_install(self, tmp_path):
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(
-                cli, ["init", "git-docker-agent", "--non-interactive", "--mcp", "git"],
+                cli, ["init", "git-docker-agent", "--non-interactive", "--skip-install", "--mcp", "git"],
                 catch_exceptions=False,
             )
             dockerfile = (Path("git-docker-agent") / "Dockerfile").read_text()
@@ -453,7 +453,7 @@ class TestInitMcp:
     def test_init_no_mcp_dockerfile_no_apt(self, tmp_path):
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(
-                cli, ["init", "plain-agent", "--non-interactive"],
+                cli, ["init", "plain-agent", "--non-interactive", "--skip-install"],
                 catch_exceptions=False,
             )
             dockerfile = (Path("plain-agent") / "Dockerfile").read_text()

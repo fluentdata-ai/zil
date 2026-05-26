@@ -330,7 +330,7 @@ class TestInitFrameworkFlag:
     def test_init_default_framework_is_adk(self, tmp_path):
         with runner_cli.isolated_filesystem(temp_dir=tmp_path):
             result = runner_cli.invoke(
-                cli, ["init", "test-agent", "--non-interactive"],
+                cli, ["init", "test-agent", "--non-interactive", "--skip-install"],
                 catch_exceptions=False,
             )
             assert result.exit_code == 0
@@ -340,7 +340,7 @@ class TestInitFrameworkFlag:
     def test_init_framework_adk_explicit(self, tmp_path):
         with runner_cli.isolated_filesystem(temp_dir=tmp_path):
             result = runner_cli.invoke(
-                cli, ["init", "test-agent", "--framework", "adk", "--non-interactive"],
+                cli, ["init", "test-agent", "--framework", "adk", "--non-interactive", "--skip-install"],
                 catch_exceptions=False,
             )
             assert result.exit_code == 0
@@ -350,7 +350,7 @@ class TestInitFrameworkFlag:
     def test_init_framework_unknown_fails(self, tmp_path):
         with runner_cli.isolated_filesystem(temp_dir=tmp_path):
             result = runner_cli.invoke(
-                cli, ["init", "test-agent", "--framework", "nope", "--non-interactive"],
+                cli, ["init", "test-agent", "--framework", "nope", "--non-interactive", "--skip-install"],
             )
             assert result.exit_code != 0
             assert "Unknown framework" in result.output

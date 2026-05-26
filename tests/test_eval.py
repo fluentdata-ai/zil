@@ -569,7 +569,7 @@ class TestInitWithEvalFramework:
         with runner.isolated_filesystem():
             result = runner.invoke(
                 cli,
-                ["init", "test-agent", "--non-interactive"],
+                ["init", "test-agent", "--non-interactive", "--skip-install"],
             )
             assert result.exit_code == 0
 
@@ -589,7 +589,7 @@ class TestInitWithEvalFramework:
         with runner.isolated_filesystem():
             result = runner.invoke(
                 cli,
-                ["init", "test-agent", "--non-interactive"],
+                ["init", "test-agent", "--non-interactive", "--skip-install"],
             )
             assert result.exit_code == 0
 
@@ -610,7 +610,7 @@ class TestInitWithEvalFramework:
         with runner.isolated_filesystem():
             result = runner.invoke(
                 cli,
-                ["init", "test-agent", "--no-evals", "--non-interactive"],
+                ["init", "test-agent", "--no-evals", "--non-interactive", "--skip-install"],
             )
             assert result.exit_code == 0
 
