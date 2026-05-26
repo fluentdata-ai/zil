@@ -151,8 +151,11 @@ def _resolve_env_vars(
         is_secret = decl.get("secret", False)
         description = decl.get("description", "")
 
-        # Resolution order: env file → interactive prompt
+        # Resolution order: env file → os.environ → interactive prompt
         value = file_values.get(name)
+
+        if value is None:
+            value = os.environ.get(name)
 
         if value is None and not env_file:
             # Interactive prompt
