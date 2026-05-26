@@ -87,6 +87,7 @@ def validate_project(project_dir: Path) -> ValidationResult:
         return result
 
     # File reference checks
+    _check_framework(project_dir, manifest, result)
     _check_identity(project_dir, manifest, result)
     _check_adapters(project_dir, manifest, result)
     _check_evals(project_dir, manifest, result)
@@ -101,6 +102,34 @@ def validate_project(project_dir: Path) -> ValidationResult:
     _check_service(manifest, result)
 
     return result
+
+
+def _check_framework(project_dir: Path, manifest: dict, result: ValidationResult) -> None:
+    """Validate runtime.framework against the backend registry."""
+    from zil.sdk.frameworks import registry
+    from zil.sdk.frameworks.base import UnknownFrameworkError
+
+    framework = manifest.get("spec", {}).get("runtime", {}).get("framework", "adk")
+
+    try:
+        backend = registry.get(framework)
+        result.checks.append(
+            CheckResult("pass", f"runtime.framework — {framework!r} (registered)")
+        )
+    except UnknownFrameworkError:
+        result.checks.append(
+            CheckResult(
+                "fail",
+                f"runtime.framework — unknown framework {framework!r}. "
+                f"Registered: {registry.list_names()}",
+            )
+        )
+        return
+
+    # Delegate framework-specific validation to the backend
+    backend_checks = backend.validate(project_dir, manifest)
+    for check in backend_checks:
+        result.checks.append(check)
 
 
 def _check_identity(project_dir: Path, manifest: dict, result: ValidationResult) -> None:

@@ -1,10 +1,6 @@
-"""zil run — run the agent interactively via ADK."""
+"""zil run — run the agent interactively via the framework backend."""
 
-import asyncio
 import os
-import shutil
-import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +11,7 @@ console = Console()
 
 
 def _resolve_module(project_dir: Path) -> str:
-    """Derive the ADK module name from the manifest."""
+    """Derive the agent module name from the manifest."""
     import yaml
 
     manifest_path = project_dir / "manifest.yaml"
@@ -66,31 +62,10 @@ def _resolve_otlp_endpoint(project_dir: Path, manifest: dict[str, Any]) -> str |
     return _resolve_env_refs(endpoint) or None
 
 
-def _run_in_process(project_dir: Path, module_name: str) -> None:
-    """Run the agent in-process using ADK's runner (enables in-process tracing)."""
-    try:
-        from google.adk.cli.cli import run_cli
-    except ImportError:
-        console.print(
-            "[red]Error:[/red] google-adk is required. "
-            "Install it with: [bold]pip install 'zil-ai\\[adk]'[/bold]"
-        )
-        raise SystemExit(1)
-
-    asyncio.run(
-        run_cli(
-            agent_parent_dir=str(project_dir),
-            agent_folder_name=module_name,
-            input_file=None,
-            saved_session_file=None,
-            save_session=False,
-            session_id=None,
-            session_service_uri=None,
-            artifact_service_uri=None,
-            memory_service_uri=None,
-            use_local_storage=True,
-        )
-    )
+def _resolve_framework(project_dir: Path) -> str:
+    """Read the runtime.framework value from the manifest."""
+    manifest = _load_manifest(project_dir)
+    return manifest.get("spec", {}).get("runtime", {}).get("framework", "adk")
 
 
 @click.command()
@@ -111,9 +86,13 @@ def _run_in_process(project_dir: Path, module_name: str) -> None:
     help="Print spans to stderr (no collector needed).",
 )
 def run(project_dir: Path, trace_mode: bool, trace_console: bool) -> None:
-    """Run the agent interactively (wraps adk run)."""
+    """Run the agent interactively via the framework backend."""
+    from zil.sdk.frameworks import registry
+
     project_dir = project_dir.resolve()
     module_name = _resolve_module(project_dir)
+    framework = _resolve_framework(project_dir)
+    backend = registry.get(framework)
 
     module_dir = project_dir / module_name
     if not module_dir.is_dir():
@@ -135,10 +114,7 @@ def run(project_dir: Path, trace_mode: bool, trace_console: bool) -> None:
         if ok:
             console.print("[green]✓[/green] Console tracing active — spans printed to stderr.")
 
-        _run_in_process(project_dir, module_name)
-        return
-
-    # --trace: set OTLP env var so ADK subprocess picks it up
+    # --trace: set OTLP env var so framework subprocess picks it up
     if trace_mode:
         manifest = _load_manifest(project_dir)
         endpoint = _resolve_otlp_endpoint(project_dir, manifest)
@@ -151,14 +127,12 @@ def run(project_dir: Path, trace_mode: bool, trace_console: bool) -> None:
                 "Set OTEL_EXPORTER_OTLP_TRACES_ENDPOINT in your .env file."
             )
 
-    # Default: subprocess to adk run
-    if not shutil.which("adk"):
-        console.print(
-            "[red]Error:[/red] adk CLI not found. "
-            "Install it with: [bold]pip install 'zil-ai\\[adk]'[/bold]"
-        )
-        raise SystemExit(1)
-
-    sys.exit(
-        subprocess.call(["adk", "run", module_name], cwd=str(project_dir))
+    # Dispatch to backend
+    backend.run_local(
+        agent=None,  # Agent object not needed for CLI-level run
+        mode="interactive",
+        project_dir=project_dir,
+        module_name=module_name,
+        trace_mode=trace_mode,
+        trace_console=trace_console,
     )

@@ -633,6 +633,18 @@ def deploy(
     agent_name = _resolve_module(project_dir)
     module_dir = _resolve_module_dir(project_dir, agent_name)
 
+    # Validate framework is registered
+    manifest_path_check = project_dir / "manifest.yaml"
+    if manifest_path_check.is_file():
+        _manifest = yaml.safe_load(manifest_path_check.read_text())
+        framework = _manifest.get("spec", {}).get("runtime", {}).get("framework", "adk")
+        from zil.sdk.frameworks import registry
+        try:
+            backend = registry.get(framework)
+        except Exception as exc:
+            console.print(f"[red]Error:[/red] {exc}")
+            raise SystemExit(1)
+
     # Verify module directory exists
     if not (project_dir / module_dir).is_dir():
         console.print(

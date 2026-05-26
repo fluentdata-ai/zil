@@ -5,6 +5,27 @@ All notable changes to the `zil-ai` package will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.19] — 2026-05-26
+
+### Added
+
+- **Framework Backend Abstraction (RFC-002a)** — pluggable `FrameworkBackend` protocol, `BackendRegistry`, and neutral `AgentSpec` / `WiredAgent` types. Zil now supports multiple agent frameworks behind a single interface.
+- **`StubBackend`** — test-only backend with no external dependencies, always registered. Proves the abstraction works without any real agent framework.
+- **`AdkBackend`** — encapsulates all Google ADK-specific logic (model mapping, MCP wiring, sub-agent building, local execution). Auto-registered when `google-adk` is installed.
+- **`zil init --framework`** — new CLI flag to select the agent framework at scaffold time. Validates against registered backends; defaults to `adk`.
+- **`runtime.framework_config`** — new optional manifest field for framework-specific configuration (e.g. `sandbox: docker`). Passes schema validation with arbitrary keys.
+- **`_check_framework()` validation** — `zil validate` now checks `runtime.framework` against registered backends and delegates framework-specific validation.
+- **Schema updates** — `runtime.framework` enum extended with `openhands`, `stub`. `framework_config` object added.
+- **SDK exports** — `AgentSpec`, `BackendRegistry`, `FrameworkBackend`, `UnknownFrameworkError`, `WiredAgent`, `registry` now exported from `zil.sdk`.
+- **31 new tests** in `tests/test_frameworks.py` covering registry, protocols, stub backend, validation, schema, and init flag.
+
+### Changed
+
+- **`create_agent()`** — now dispatches to the appropriate `FrameworkBackend` via the registry instead of hardcoding ADK. Returns `wired.inner` for backward compatibility.
+- **`zil run` / `zil web`** — route execution through `backend.run_local()` instead of directly calling ADK CLI.
+- **`zil deploy`** — validates framework is registered before proceeding.
+- **`sdk/agent.py`** — ADK-specific code (`_MODEL_MAP`, `_build_generate_content_config`, `_load_skills`, `_build_sub_agents`) moved to `sdk/frameworks/adk/backend.py`. Backward-compatible re-exports retained.
+
 ## [0.1.18] — 2026-05-25
 
 ### Added

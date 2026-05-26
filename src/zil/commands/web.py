@@ -1,8 +1,5 @@
-"""zil web — start the ADK web UI for the agent."""
+"""zil web — start the web UI for the agent via the framework backend."""
 
-import shutil
-import subprocess
-import sys
 from pathlib import Path
 
 import click
@@ -43,13 +40,21 @@ def web(
     project_dir: Path, port: int, trace_mode: bool,
     trace_console: bool, docker_mode: bool,
 ) -> None:
-    """Start the ADK web UI for the agent (wraps adk web)."""
+    """Start the web UI for the agent via the framework backend."""
     import os
 
-    from zil.commands.run import _load_manifest, _resolve_module, _resolve_otlp_endpoint
+    from zil.commands.run import (
+        _load_manifest,
+        _resolve_framework,
+        _resolve_module,
+        _resolve_otlp_endpoint,
+    )
+    from zil.sdk.frameworks import registry
 
     project_dir = project_dir.resolve()
     module_name = _resolve_module(project_dir)
+    framework = _resolve_framework(project_dir)
+    backend = registry.get(framework)
 
     # Docker mode: build and run in container
     if docker_mode:
@@ -59,13 +64,6 @@ def web(
             raise SystemExit(1)
         docker_run(project_dir, module_name.replace("_", "-"), module_name, port, trace_mode)
         return
-
-    if not shutil.which("adk"):
-        console.print(
-            "[red]Error:[/red] adk CLI not found. "
-            "Install it with: [bold]pip install 'zil-ai\\[adk]'[/bold]"
-        )
-        raise SystemExit(1)
 
     module_dir = project_dir / module_name
     if not module_dir.is_dir():
@@ -92,10 +90,13 @@ def web(
                 "Set OTEL_EXPORTER_OTLP_TRACES_ENDPOINT in your .env file."
             )
 
-    console.print(f"Starting ADK web UI on http://localhost:{port}")
-    sys.exit(
-        subprocess.call(
-            ["adk", "web", "--port", str(port)],
-            cwd=str(project_dir),
-        )
+    # Dispatch to backend with web mode
+    backend.run_local(
+        agent=None,
+        mode="web",
+        project_dir=project_dir,
+        module_name=module_name,
+        port=port,
+        trace_mode=trace_mode,
+        trace_console=trace_console,
     )

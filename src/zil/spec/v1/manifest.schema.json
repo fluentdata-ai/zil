@@ -254,9 +254,14 @@
       "properties": {
         "framework": {
           "type": "string",
-          "enum": ["adk", "a2a-supervisor", "custom"],
+          "enum": ["adk", "a2a-supervisor", "openhands", "stub", "custom"],
           "default": "adk",
           "description": "Agent framework."
+        },
+        "framework_config": {
+          "type": "object",
+          "description": "Framework-specific configuration (e.g. sandbox, runtime options).",
+          "additionalProperties": true
         },
         "language": {
           "type": "string",

@@ -54,7 +54,7 @@ class TestCLIBasics:
     def test_web_help(self):
         result = runner.invoke(cli, ["web", "--help"])
         assert result.exit_code == 0
-        assert "ADK web UI" in result.output
+        assert "web UI" in result.output
 
 
 class TestInit:

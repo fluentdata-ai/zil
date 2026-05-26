@@ -55,6 +55,13 @@ SERVICE_MODES = ["none", "webhook"]
     help="Service entry-point mode: 'webhook' scaffolds FastAPI app.py + runner.py.",
 )
 @click.option(
+    "--framework",
+    "framework_name",
+    type=str,
+    default=None,
+    help="Agent framework (default: adk). Use a registered backend name.",
+)
+@click.option(
     "--non-interactive",
     is_flag=True,
     help="Use defaults for all prompts.",
@@ -68,6 +75,7 @@ def init(
     agent_names: str | None,
     skill_names: str | None,
     service_mode: str | None,
+    framework_name: str | None,
     non_interactive: bool,
 ) -> None:
     """Scaffold a new Zil agent project.
@@ -102,9 +110,19 @@ def init(
     if skill_names:
         parsed_skills = [s.strip() for s in skill_names.split(",") if s.strip()]
 
+    # Resolve framework — validate it's a registered backend
+    resolved_framework = framework_name or "adk"
+    from zil.sdk.frameworks import registry
+    if resolved_framework not in registry:
+        console.print(
+            f"[red]Error:[/red] Unknown framework {resolved_framework!r}. "
+            f"Registered: {registry.list_names()}"
+        )
+        raise SystemExit(1)
+
     config = InitConfig(
         name=name,
-        framework="adk",
+        framework=resolved_framework,
         language="python",
         llm_provider=llm_provider,
         eval_framework="deepeval",
