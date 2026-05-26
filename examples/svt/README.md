@@ -54,7 +54,9 @@ SVT uses a three-agent hierarchy:
 ### 1. Install Zil
 
 ```bash
-pip install 'zil-ai[adk]'
+uv venv
+source .venv/bin/activate
+uv pip install 'zil-ai[adk]'
 ```
 
 ### 2. Configure environment

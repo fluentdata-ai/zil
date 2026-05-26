@@ -77,7 +77,7 @@ In CI (GitHub Actions, GitLab CI, etc.), keyless signing uses workload identity 
 # GitHub Actions example
 - name: Build and sign
   run: |
-    pip install zil-ai
+    uv pip install zil-ai
     zil pack --sign
   env:
     COSIGN_EXPERIMENTAL: "1"
@@ -233,7 +233,7 @@ jobs:
       - uses: sigstore/cosign-installer@v3
 
       - name: Install Zil
-        run: pip install 'zil-ai[registry]'
+        run: uv pip install 'zil-ai[registry]'
 
       - name: Pack and sign
         run: zil pack --sign

@@ -25,7 +25,7 @@ classifiers = [
 ]
 dependencies = [
     "click>=8.1,<9",
-    "rich>=13.0,<14",
+    "rich>=13.0,<15",
     "pydantic>=2.0,<3",
     "jsonschema>=4.20,<5",
     "pyyaml>=6.0,<7",

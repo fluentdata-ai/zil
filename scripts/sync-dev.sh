@@ -12,6 +12,12 @@ if [ ! -d "$TMP_DIR" ]; then
     exit 0
 fi
 
+# Ensure uv is available
+if ! command -v uv &>/dev/null; then
+    echo "Error: uv not found. Install it: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    exit 1
+fi
+
 echo "→ Syncing local zil-ai into tmp/ project venvs..."
 
 for venv in "$TMP_DIR"/*/.venv; do
@@ -19,16 +25,8 @@ for venv in "$TMP_DIR"/*/.venv; do
     project="$(dirname "$venv")"
     name="$(basename "$project")"
 
-    pip_bin="$venv/bin/pip"
-    [ -f "$pip_bin" ] || pip_bin="$venv/Scripts/pip.exe"
-
-    if [ ! -f "$pip_bin" ]; then
-        echo "  ⚠ $name — no pip found, skipping"
-        continue
-    fi
-
     echo "  → $name"
-    "$pip_bin" install -e "${REPO_ROOT}[adk,eval]" --quiet 2>&1 | grep -v "already satisfied" || true
+    VIRTUAL_ENV="$venv" uv pip install -e "${REPO_ROOT}[adk,serve,eval]" --quiet 2>&1 || true
     echo "  ✓ $name updated"
 done
 

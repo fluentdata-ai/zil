@@ -271,7 +271,7 @@ Error: Eval suite failed. Fix eval failures before packaging.
 The eval engine requires the `[eval]` optional extra:
 
 ```bash
-pip install 'zil-ai[eval]'
+uv pip install 'zil-ai[eval]'
 ```
 
 For deterministic-only evals (`expected_contains`, `expected_tool`, `expected_action`), no additional dependencies are needed beyond the base `zil-ai` package.

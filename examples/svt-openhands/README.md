@@ -22,6 +22,24 @@ served via `zil serve`. **No app.py needed.**
 └───────────────────────────────────────────┘
 ```
 
+## Prerequisites
+
+- Python 3.12+
+- [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
+- An LLM API key (Anthropic by default — see `adapters/llm.yaml`)
+
+## Setup
+
+```bash
+# Create a virtual environment and install dependencies
+uv venv
+source .venv/bin/activate
+uv pip install 'zil-ai[serve,openhands]'
+
+# Or, if developing from the local zil repo:
+# uv pip install -e '/path/to/zil[serve,openhands]'
+```
+
 ## Run locally
 
 ```bash

@@ -23,6 +23,16 @@ spec:
       description: LLM API key for the model provider
       required: true
       secret: true
+    - name: JIRA_MCP_COMMAND
+      description: Command to run the Jira MCP server (e.g. uvx or npx)
+      required: true
+    - name: JIRA_BASE_URL
+      description: Jira instance URL (e.g. https://your-org.atlassian.net)
+      required: true
+    - name: JIRA_API_TOKEN
+      description: Atlassian API token for Jira access
+      required: true
+      secret: true
     - name: JIRA_WEBHOOK_SECRET
       description: Secret for verifying Jira webhook signatures
       required: false
@@ -31,10 +41,14 @@ spec:
   tools:
     mcp_servers:
       - name: jira
-        command: npx
-        args: ["-y", "@anthropic/jira-mcp-server"]
-        env:
-          JIRA_API_TOKEN: "${JIRA_API_TOKEN}"
-          JIRA_BASE_URL: "${JIRA_BASE_URL}"
+        transport: stdio
+        command: "${JIRA_MCP_COMMAND}"
+        args:
+          - "mcp-server-jira"
+          - "--jira-base-url"
+          - "${JIRA_BASE_URL}"
+          - "--jira-token"
+          - "${JIRA_API_TOKEN}"
+        timeout: 30
 
   # No app.py needed — zil serve handles everything

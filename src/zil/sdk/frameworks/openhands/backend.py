@@ -366,17 +366,19 @@ class OpenHandsBackend:
     ) -> AsyncIterator:
         """Invoke the OpenHands agent and yield SessionEvents.
 
-        Uses OpenHands' Conversation API to send a message and maps
-        the results to framework-neutral SessionEvent instances.
+        Uses OpenHands' Conversation API:
+        - ``send_message()`` + ``arun()`` to execute the agent with tools
+        - Extracts response from the event log (MessageEvent with source='agent')
         """
         from zil.sdk.session import SessionEvent
 
         try:
             from openhands.sdk import Conversation
+            from openhands.sdk.event import MessageEvent, ActionEvent, ObservationEvent
         except ImportError:
             yield SessionEvent(
                 type="error",
-                text="openhands-sdk is required. Install with: pip install 'zil-ai[openhands]'",
+                text="openhands-sdk is required. Install with: uv pip install 'zil-ai[openhands]'",
             )
             return
 
@@ -385,22 +387,53 @@ class OpenHandsBackend:
         oh_agent = agent._agent if hasattr(agent, "_agent") else agent
 
         try:
-            conversation = Conversation(agent=oh_agent, workspace=ws)
+            conversation = Conversation(
+                agent=oh_agent,
+                workspace=ws,
+                visualizer=None,
+            )
             try:
                 conversation.send_message(message)
-                result = conversation.run()
+                await conversation.arun()
 
-                # Extract text from result
-                response_text = ""
-                if hasattr(result, "text"):
-                    response_text = result.text
-                elif isinstance(result, str):
-                    response_text = result
-                elif result is not None:
-                    response_text = str(result)
-
-                if response_text:
-                    yield SessionEvent(type="text", text=response_text)
+                # Extract events from the conversation's event log
+                if hasattr(conversation, "state") and hasattr(conversation.state, "events"):
+                    for event in conversation.state.events:
+                        if isinstance(event, MessageEvent):
+                            if event.source == "agent":
+                                # Extract text from the LLM message
+                                text = ""
+                                if hasattr(event, "llm_message") and event.llm_message:
+                                    msg = event.llm_message
+                                    if hasattr(msg, "content"):
+                                        if isinstance(msg.content, str):
+                                            text = msg.content
+                                        elif isinstance(msg.content, list):
+                                            text = "".join(
+                                                part.text for part in msg.content
+                                                if hasattr(part, "text") and part.text
+                                            )
+                                if text:
+                                    yield SessionEvent(type="text", text=text)
+                        elif isinstance(event, ActionEvent):
+                            # Yield tool calls as events
+                            tool_name = getattr(event, "tool", None) or getattr(event, "action", "")
+                            args = {}
+                            if hasattr(event, "args"):
+                                args = event.args if isinstance(event.args, dict) else {}
+                            yield SessionEvent(
+                                type="tool_call",
+                                tool_name=str(tool_name),
+                                args=args,
+                            )
+                        elif isinstance(event, ObservationEvent):
+                            # Yield tool results
+                            result_text = getattr(event, "content", "") or getattr(event, "output", "")
+                            if result_text:
+                                yield SessionEvent(
+                                    type="tool_result",
+                                    text=str(result_text)[:2000],
+                                )
             finally:
                 conversation.close()
 

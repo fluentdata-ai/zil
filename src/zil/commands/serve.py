@@ -194,10 +194,21 @@ def _create_app(
         finally:
             await session.close()
 
+        # Build events list for response
+        events_out = []
+        for ev in response.events:
+            events_out.append({
+                "type": ev.type,
+                "text": ev.text,
+                "tool_name": ev.tool_name,
+                "args": ev.args,
+            })
+
         return {
             "text": response.text,
             "session_id": response.session_id,
             "token_usage": response.token_usage,
+            "events": events_out,
         }
 
     # ---- Manifest-declared webhooks ---------------------------------------

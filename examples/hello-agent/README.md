@@ -8,12 +8,10 @@ A minimal Zil reference agent demonstrating identity composition, runtime guardr
 # From the repo root
 cd examples/hello-agent
 
-# Create a virtual environment
-python -m venv .venv
+# Create a virtual environment and install dependencies
+uv venv
 source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 
 # Set up your API key
 cp hello_agent/.env.example hello_agent/.env

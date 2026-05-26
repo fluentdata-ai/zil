@@ -20,13 +20,13 @@ Zil composes with [ADK](https://google.github.io/adk-docs/), [A2A](https://googl
 ## Install
 
 ```bash
-pip install zil-ai
+uv pip install zil-ai
 ```
 
 For agent creation with ADK:
 
 ```bash
-pip install 'zil-ai[adk]'
+uv pip install 'zil-ai[adk]'
 ```
 
 ## Quick start
@@ -84,7 +84,7 @@ The [`examples/hello-agent`](examples/hello-agent) directory contains a minimal 
 
 ```bash
 cd examples/hello-agent
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 zil validate && zil audit && zil run
 ```
 

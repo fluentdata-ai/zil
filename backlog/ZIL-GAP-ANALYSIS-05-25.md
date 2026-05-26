@@ -71,7 +71,7 @@ Cross-cutting: the product is currently **GCP/Cloud-Run-and-ADK-coupled**, while
 **Built:** declarative manifest; `.zil` signed tar archive with SBOM (CycloneDX 1.5) + provenance + cosign; OCI push via ORAS; deploy (Cloud Run) with eval gate, env injection, Cloud SQL auto-wiring; **multi-agent scaffolding** (`spec.agents`, orchestrator + sub-agents, MCP assignment); HITL primitives; runtime dependency declarations; skills convention; MCP integration & bundling. This pillar is largely realized.
 **Missing / partial vs. spec:**
 - **Adapter pattern is LLM-only.** Spec promises LLM **+ embedding + vector store** adapters as first-class swappable config. Embedding/vector adapters are not built. → blocks RFC-003/004/010.
-- **Runtime conformance specification** — the spec's central "package-spec vs runtime-spec (OCI-style)" separation **does not exist**. There is no published runtime contract (load/session/turn/checkpoint/restore/HITL/observability interface). Deploy is hardwired to Cloud Run + ADK. This is the keystone gap for the portability story. → **RFC-011 (Runtime Conformance Spec)**.
+- **Runtime conformance specification + cloud adapters** — the spec's central "package-spec vs runtime-spec (OCI-style)" separation **does not exist**. There is no runtime contract (load/session/turn/checkpoint/restore/HITL/observability interface), and deploy is hardwired to **Cloud Run + ADK**. **This is where AWS/Azure/neocloud support lives**, and it is two things: the **conformance contract** (designed once) and **per-platform adapters** (Cloud Run, Modal, AWS, Azure, k8s — each its own item; "support AWS" = contract + AWS adapter). Keystone gap for the portability story. → **RFC-011 (contract + Cloud Run reference) + the RFC-011 adapter series**.
 - **Multi-agent *topology* governance** — scaffolding exists, but the spec's richer claims (declared topology of who-talks-to-whom, **what context can transfer**, A2A handoffs, **shared-memory boundaries**, system-level evaluation) are largely unbuilt. → **RFC-005 (Multi-Agent Topology & A2A)**.
 - **Portable vector snapshots** (`data/` RAG bundles restorable into any backend) — not built; depends on vector adapter + RAG. → RFC-004.
 - **Rollback / canary** as pipeline features — not evidenced. → RFC-009.
@@ -88,9 +88,11 @@ The spec's headline commercial argument is **no lock-in**: tooling-agnostic, dep
 |---|---|---|---|
 | **Framework** | ADK only | `FrameworkBackend` abstraction | **RFC-002a** |
 | **Provider** (LLM/embedding/vector) | LLM adapter only; embedding/vector absent | provider adapter set | **RFC-004** |
-| **Runtime** (where it executes) | Cloud Run + ADK deploy hardwired | runtime conformance contract | **RFC-011** |
+| **Runtime** (where it executes) | Cloud Run + ADK deploy hardwired | runtime conformance **contract** (RFC-011) + per-platform **adapters** (RFC-011 series) | **RFC-011 (+ adapters)** |
 
 Treat these as one **portability theme**, not three scattered RFCs. None alone satisfies the spec's promise: RFC-011 makes the *runtime* swappable, RFC-002a makes the *framework* swappable, RFC-004 makes *providers* swappable. **RFC-002a + RFC-011 together** are what actually deliver "deploy any framework, anywhere." All three are strategic, co-equal gaps — the earlier draft under-weighted framework portability relative to cloud portability; they are peers.
+
+> **The runtime layer is itself two things, not one** (this is where AWS/Azure/neocloud support actually lives). RFC-011 splits into (a) the **conformance contract** — the abstract runtime interface, designed once — and (b) **per-platform runtime adapters** — Cloud Run, Modal, AWS (ECS/Fargate), Azure (Container Apps), k8s — each its own item. **"Support AWS" = the contract *plus* an AWS adapter, not one ticket.** Recommended adapter sequence: **Cloud Run** (refactor existing → known-good reference) → **Modal** (neocloud; the *second* adapter, deliberately chosen as the contract's neutrality proof because it's most architecturally different, and a differentiated capability for sandboxed agentic workloads) → **AWS / Azure / k8s** (enterprise breadth, landing on a battle-tested contract). Modal is prioritized as the neutrality-prover, **not** ahead of the hyperscalers commercially — the sequencing captures the neocloud upside while the hyperscaler/sovereign adapters carry the enterprise-portability rationale.
 
 ### 4.2 Other cross-cutting gaps
 
@@ -118,7 +120,11 @@ Proposed RFCs (IDs are suggestions; sequence within tiers is the recommendation)
 | **RFC-008** | Reliability & Long-Running Execution | 4 | L | RFC-011 (runtime contract) | Checkpointing, crash recovery, resumable execution, durable long-horizon state/audit. Pairs naturally with the runtime spec. |
 | **RFC-009** | Eval-in-Production & Staged Rollout | 5, 4 | M | RFC-008 (replay needs durable capture) | Prod traffic sampling, shadow/canary/A-B, auto-rollback, drift detection, cost-per-task gate. The continuous half of evaluation. |
 | **RFC-010** | Cost Governance & Model Routing | 6 | M | RFC-004 (provider abstraction) | Budget enforcement, routing by complexity, rate limiting, multi-provider fallback, attribution. Upgrades cost *tracking* → *governance*. |
-| **RFC-011** | Runtime Conformance Specification | 7 (+ enables all) | XL | — (foundational) | The package-spec/runtime-spec separation. Defines the load/session/turn/checkpoint/HITL/observability contract that makes cloud portability real. Keystone. |
+| **RFC-011** | Runtime Conformance **Contract** | 7 (+ enables all) | L | — (foundational) | The package-spec/runtime-spec separation. Defines the load/session/turn/checkpoint/HITL/observability contract that makes cloud portability real. Keystone. Includes the **Cloud Run** reference adapter (refactor). |
+| **RFC-011·Modal** | Runtime Adapter: Modal (neocloud) | 7 | M | RFC-011 | Second adapter, by design: neutrality proof (most different from Cloud Run) + differentiated sandboxed-agent capability (synergy with RFC-002b coding agents). |
+| **RFC-011·AWS** | Runtime Adapter: AWS (ECS/Fargate) | 7 | M | RFC-011 | Primary AWS enterprise target. Follow-on, lands on the proven contract. |
+| **RFC-011·Azure** | Runtime Adapter: Azure (Container Apps) | 7 | M | RFC-011 | Primary Azure enterprise target. Follow-on. |
+| **RFC-011·k8s** | Runtime Adapter: Kubernetes (self-host/sovereign) | 7 | M | RFC-011 | Self-hosted / on-prem / sovereign — the residency & compliance story. High enterprise value after hyperscalers. Follow-on. |
 
 > **The portability theme (§4.1) spans RFC-002a + RFC-004 + RFC-011.** Framework, provider, and runtime are the same swap-the-dependency move at three layers. Consider tracking them as one theme even though they ship as separate RFCs across waves.
 
@@ -128,10 +134,10 @@ Proposed RFCs (IDs are suggestions; sequence within tiers is the recommendation)
 The two foundational abstractions land first because they unblock the most: **RFC-002a** (framework backend) and **RFC-004** (provider/embedding/vector adapters) — the same architectural move at two layers. **RFC-003** (memory, already drafted) lands on the RFC-004 adapters; **RFC-001** (enforcement) proceeds in parallel.
 
 **Wave 2 — make the portability story real and govern the fleet.**
-**RFC-011** (runtime conformance — the third portability layer and keystone of the commercial claim) and **RFC-007** (registry/governance) after its scope decision. **RFC-002b** (OpenHands backend) lands here as the first proof RFC-002a's abstraction is real and the coding-agent vertical bet. **RFC-005** (multi-agent/A2A) here too, since topology governance is increasingly the default architectural unit.
+**RFC-011 (the runtime conformance contract + Cloud Run reference adapter)** — the third portability layer and keystone of the commercial claim — and **RFC-007** (registry/governance) after its scope decision. **RFC-002b** (OpenHands backend) lands here as the first proof RFC-002a's abstraction is real and the coding-agent vertical bet. **RFC-005** (multi-agent/A2A) here too, since topology governance is increasingly the default architectural unit. The **Modal** adapter (RFC-011·Modal) follows immediately after the contract as its neutrality proof.
 
-**Wave 3 — operational maturity.**
-RFC-008 (reliability/long-running) → RFC-009 (eval-in-production, needs durable capture) → RFC-010 (cost governance, needs provider abstraction) → RFC-006 (data compliance, needs memory).
+**Wave 3 — operational maturity + cloud breadth.**
+Runtime adapter breadth lands here as demanded: **RFC-011·AWS → RFC-011·Azure → RFC-011·k8s** (each on the proven contract; sequence by customer demand). Plus RFC-008 (reliability/long-running — builds on the contract's checkpoint/restore) → RFC-009 (eval-in-production, needs durable capture) → RFC-010 (cost governance, needs provider abstraction) → RFC-006 (data compliance, needs memory).
 
 > **If forced to pick the single highest-leverage next RFC after the current three:** **RFC-011 (Runtime Conformance)** — it's the third leg of portability and its absence quietly undermines the "no lock-in" argument. But the highest-leverage *small* items are the two Wave-1 abstractions: **RFC-002a** and **RFC-004**, which together unblock framework breadth, memory, RAG, and cost routing for little code.
 
@@ -147,5 +153,5 @@ To keep the roadmap honest, these spec areas are effectively delivered and shoul
 
 1. **Toolchain vs platform boundary (RFC-007).** Is the agent registry-of-record, approval workflow, and oversight dashboard part of `zil-ai`, or a separate FluentData platform/service? This determines whether Pillar 1 is RFC'd as code or as a services offering.
 2. **How much of Pillar 1/3 governance is delivered as ISO-42001 *evidence generation* vs. *enforcement*.** The spec's ISO-42001 section frames much governance as evidence produced as a byproduct. Decide per-capability whether Zil *enforces* or merely *evidences*.
-3. **Runtime conformance ambition (RFC-011).** Full OCI-style published spec others can implement, or a pragmatic internal interface that just decouples Zil from Cloud Run first? The former is a standards play; the latter is a refactor. Very different sizes.
+3. **Runtime conformance ambition (RFC-011) — now drafted.** Full OCI-style published spec others can implement, or a pragmatic internal interface that just decouples Zil from Cloud Run first? RFC-011 (drafted) recommends building the internal contract first and treating publication as a later additive step gated on a second adapter proving it. **Confirm this choice**, plus the cloud-adapter sequence (Cloud Run reference → Modal neutrality-proof → AWS/Azure/k8s breadth) and the Modal capability claims (verify against current docs before encoding in the adapter).
 4. **RFC-003/004 split point.** Confirm the memory/RAG boundary (already drawn) and where the shared vectorization substrate lands — RFC-004 owns it, RFC-003 consumes it.
