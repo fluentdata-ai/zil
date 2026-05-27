@@ -8,6 +8,11 @@ metadata:
 spec:
   runtime:
     framework: openhands
+    dependencies:
+      - name: git
+        type: apt
+      - name: tmux
+        type: apt
     service:
       webhooks:
         - name: jira

@@ -104,6 +104,11 @@
         "cost": {
           "$ref": "#/$defs/cost",
           "description": "Token usage tracking and budget configuration."
+        },
+        "thinking_budget": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Token budget for chain-of-thought thinking (Gemini extended thinking mode)."
         }
       }
     }

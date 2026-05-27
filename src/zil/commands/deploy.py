@@ -580,11 +580,22 @@ def _deploy_unified(
         if m:
             cloud_sql_instance = m.group(1)
 
+    # Detect editable install — bundle local source so deployed version
+    # matches what was tested locally.
+    from zil.commands._docker import _is_editable_install
+
+    zil_repo_root = _is_editable_install()
+    use_local_src = zil_repo_root is not None
+
+    if use_local_src:
+        console.print("  [dim]Dev mode: bundling local zil source for deploy[/dim]")
+
     # Generate Dockerfile
     dockerfile = generate_serve_dockerfile(
         host_deps=host_deps,
         runtime_deps=runtime_deps,
         framework=framework,
+        local_zil_src=use_local_src,
     )
 
     # Stage project in a temp dir
@@ -596,7 +607,8 @@ def _deploy_unified(
 
     # Copy entire project
     ignore = shutil.ignore_patterns(
-        ".git", ".venv", "__pycache__", "*.pyc", ".ruff_cache", "node_modules"
+        ".git", ".venv", "__pycache__", "*.pyc", ".ruff_cache",
+        "node_modules", "*.egg-info",
     )
     shutil.copytree(project_dir, temp_path / "project", ignore=ignore, dirs_exist_ok=False)
 
@@ -607,6 +619,18 @@ def _deploy_unified(
         if not dest.exists():
             shutil.move(str(item), str(dest))
     shutil.rmtree(temp_path / "project", ignore_errors=True)
+
+    # Copy local zil source into build context if editable install
+    if use_local_src and zil_repo_root:
+        zil_dest = temp_path / "_zil_src"
+        zil_dest.mkdir()
+        shutil.copytree(
+            zil_repo_root / "src", zil_dest / "src", ignore=ignore,
+        )
+        shutil.copy2(zil_repo_root / "pyproject.toml", zil_dest / "pyproject.toml")
+        readme = zil_repo_root / "README.md"
+        if readme.is_file():
+            shutil.copy2(readme, zil_dest / "README.md")
 
     # Ensure requirements.txt exists
     if not (temp_path / "requirements.txt").exists():
@@ -771,7 +795,7 @@ def deploy(
     if from_ref:
         result = _deploy_from_artifact(
             from_ref, gcp_project, gcp_region, service, trace, with_ui, env_file,
-            allow_unauthenticated, memory=memory, cpu=cpu,
+            allow_unauthenticated, memory=memory, cpu=cpu, mode=mode,
         )
         _emit_deploy_result(result, output_format)
         return
@@ -869,6 +893,7 @@ def _deploy_from_artifact(
     allow_unauthenticated: bool = False,
     memory: str = "1Gi",
     cpu: str = "1",
+    mode: str = "auto",
 ) -> dict[str, Any]:
     """Deploy from a .zil archive or OCI registry reference."""
     import tempfile
@@ -935,6 +960,19 @@ def _deploy_from_artifact(
     if env_vars:
         count = len(env_vars)
         console.print(f"[green]✓[/green] Resolved {count} env variable(s)")
+
+    # Route to unified path based on mode and framework
+    framework = manifest.get("spec", {}).get("runtime", {}).get("framework", "adk")
+    use_unified = mode == "serve" or (mode == "auto" and framework != "adk")
+    if use_unified:
+        console.print(
+            f"  Using unified deploy (framework={framework} → zil serve entrypoint)"
+        )
+        return _deploy_unified(
+            project_dir, agent_name,
+            project, region, service, env_vars,
+            allow_unauthenticated, memory=memory, cpu=cpu,
+        )
 
     return _deploy_cloud_run(
         project_dir, agent_name, module_dir,

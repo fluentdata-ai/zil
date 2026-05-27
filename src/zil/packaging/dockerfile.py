@@ -232,6 +232,7 @@ def generate_serve_dockerfile(
     runtime_deps: list[dict] | None = None,
     framework: str = "adk",
     port: int = 8000,
+    local_zil_src: bool = False,
 ) -> str:
     """Generate a Dockerfile for unified deploy using ``zil serve`` as entrypoint.
 
@@ -244,12 +245,26 @@ def generate_serve_dockerfile(
         runtime_deps: Structured deps from spec.runtime.dependencies.
         framework: Framework backend name (for optional dep group).
         port: Port to expose (default 8000).
+        local_zil_src: If True, install zil from a local ``_zil_src/``
+            directory copied into the build context (for development).
+            If False, install from PyPI (production default).
     """
     apt_block = _apt_install_block(host_deps or [])
     rt_block = _runtime_deps_block(runtime_deps or [])
 
-    # Determine extra pip install for framework
-    extras = f"zil-ai[serve,{framework}]" if framework != "stub" else "zil-ai[serve]"
+    # Determine zil install block
+    extras_suffix = f"[serve,{framework}]" if framework != "stub" else "[serve]"
+    if local_zil_src:
+        zil_install = (
+            f"# Install zil from local source (dev mode)\n"
+            f"COPY _zil_src/ /app/_zil_src/\n"
+            f"RUN uv pip install --system --no-cache '/app/_zil_src{extras_suffix}'"
+        )
+    else:
+        zil_install = (
+            f"# Install zil with serve + framework extras\n"
+            f"RUN uv pip install --system --no-cache zil-ai{extras_suffix}"
+        )
 
     return f"""\
 FROM python:3.12-slim
@@ -258,16 +273,19 @@ WORKDIR /app
 # Create a non-root user
 RUN adduser --disabled-password --gecos "" appuser
 {apt_block}{rt_block}
+# Install uv/uvx for fast dependency resolution and tool running
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uvx /usr/local/bin/uvx
+
+# Install project dependencies (as root so we can write to site-packages)
+COPY requirements.txt .
+RUN uv pip install --system --no-cache -r requirements.txt
+
+{zil_install}
+
 # Switch to non-root user
 USER appuser
 ENV PATH="/home/appuser/.local/bin:$PATH"
-
-# Install project dependencies
-COPY --chown=appuser:appuser requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Install zil with serve + framework extras
-RUN pip install --no-cache-dir {extras}
 
 # Copy project files
 COPY --chown=appuser:appuser . .

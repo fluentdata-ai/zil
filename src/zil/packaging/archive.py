@@ -287,7 +287,9 @@ def extract_archive(archive_path: Path, target_dir: Path) -> Path:
 def _add_bytes_to_tar(tar: tarfile.TarFile, name: str, data: bytes) -> None:
     """Add raw bytes as a file to a tar archive."""
     import io
+    import time
 
     info = tarfile.TarInfo(name=name)
     info.size = len(data)
+    info.mtime = int(time.time())
     tar.addfile(info, io.BytesIO(data))

@@ -136,6 +136,23 @@ def _regenerate_dockerfile(project_dir: Path, agent_name: str) -> None:
     )
 
 
+def _is_editable_install() -> Path | None:
+    """Detect if zil is installed as an editable (dev) package.
+
+    Returns the repo root Path if editable, None if installed from PyPI.
+    """
+    import zil as _zil_pkg
+
+    pkg_path = Path(_zil_pkg.__file__).resolve()
+    # Editable installs live in src/zil/, not site-packages
+    if "site-packages" not in str(pkg_path):
+        # Walk up: __file__ → src/zil/__init__.py → src/zil → src → repo root
+        repo_root = pkg_path.parent.parent.parent
+        if (repo_root / "pyproject.toml").is_file():
+            return repo_root
+    return None
+
+
 def docker_serve(
     project_dir: Path,
     agent_name: str,
@@ -147,6 +164,10 @@ def docker_serve(
     This is the framework-agnostic Docker path — it generates a Dockerfile
     using ``generate_serve_dockerfile()`` and runs ``zil serve`` inside
     the container.
+
+    If zil is installed as an editable package (local development), the
+    local source is copied into the Docker build context so the container
+    gets the same version. Otherwise, zil is installed from PyPI.
     """
     import tempfile
 
@@ -164,12 +185,20 @@ def docker_serve(
     host_deps = read_host_deps(manifest)
     runtime_deps = read_runtime_deps(manifest)
 
+    # Detect editable install for local dev
+    zil_repo_root = _is_editable_install()
+    use_local_src = zil_repo_root is not None
+
+    if use_local_src:
+        console.print("  [dim]Dev mode: packaging local zil source into container[/dim]")
+
     # Generate Dockerfile
     dockerfile = generate_serve_dockerfile(
         host_deps=host_deps,
         runtime_deps=runtime_deps,
         framework=framework,
         port=port,
+        local_zil_src=use_local_src,
     )
 
     # Stage in temp dir
@@ -180,7 +209,8 @@ def docker_serve(
 
     # Copy project files (excluding .git, .venv, etc.)
     ignore = shutil.ignore_patterns(
-        ".git", ".venv", "__pycache__", "*.pyc", ".ruff_cache", "node_modules"
+        ".git", ".venv", "__pycache__", "*.pyc", ".ruff_cache",
+        "node_modules", ".ruff_cache", "*.egg-info",
     )
     for item in project_dir.iterdir():
         if item.name in {".git", ".venv", "__pycache__", ".ruff_cache", "node_modules"}:
@@ -190,6 +220,19 @@ def docker_serve(
             shutil.copytree(item, dest, ignore=ignore)
         else:
             shutil.copy2(item, dest)
+
+    # Copy local zil source into build context if editable install
+    if use_local_src and zil_repo_root:
+        zil_dest = temp_path / "_zil_src"
+        # Only copy what pip needs: src/, pyproject.toml, README
+        zil_dest.mkdir()
+        shutil.copytree(
+            zil_repo_root / "src", zil_dest / "src", ignore=ignore,
+        )
+        shutil.copy2(zil_repo_root / "pyproject.toml", zil_dest / "pyproject.toml")
+        readme = zil_repo_root / "README.md"
+        if readme.is_file():
+            shutil.copy2(readme, zil_dest / "README.md")
 
     # Ensure requirements.txt exists
     if not (temp_path / "requirements.txt").exists():
