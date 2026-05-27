@@ -40,8 +40,17 @@ def web(
     project_dir: Path, port: int, trace_mode: bool,
     trace_console: bool, docker_mode: bool,
 ) -> None:
-    """Start the web UI for the agent via the framework backend."""
+    """Start the web UI for the agent via the framework backend.
+
+    .. deprecated::
+        Use ``zil serve`` instead. ``zil web`` will be removed in a future release.
+    """
     import os
+
+    console.print(
+        "[yellow]⚠ Deprecation:[/yellow] 'zil web' is deprecated. "
+        "Use [bold]zil serve[/bold] instead (with --docker for containerized runs)."
+    )
 
     from zil.commands.run import (
         _load_manifest,

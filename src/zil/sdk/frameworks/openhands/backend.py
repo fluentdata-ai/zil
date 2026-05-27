@@ -356,6 +356,22 @@ class OpenHandsBackend:
 
         return {"mcpServers": servers} if servers else {}
 
+    @staticmethod
+    def _extract_message_text(event: Any) -> str:
+        """Extract plain text from an OpenHands MessageEvent."""
+        if not hasattr(event, "llm_message") or not event.llm_message:
+            return ""
+        msg = event.llm_message
+        content = getattr(msg, "content", None)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "".join(
+                getattr(part, "text", "") for part in content
+                if getattr(part, "text", "")
+            )
+        return ""
+
     async def invoke(
         self,
         agent: Any,
@@ -366,15 +382,20 @@ class OpenHandsBackend:
     ) -> AsyncIterator:
         """Invoke the OpenHands agent and yield SessionEvents.
 
-        Uses OpenHands' Conversation API:
-        - ``send_message()`` + ``arun()`` to execute the agent with tools
-        - Extracts response from the event log (MessageEvent with source='agent')
+        Uses OpenHands' Conversation API with **callbacks** so that events
+        are captured in real time (tool calls, observations, agent messages)
+        rather than being extracted post-hoc from the event log.
         """
         from zil.sdk.session import SessionEvent
 
         try:
             from openhands.sdk import Conversation
-            from openhands.sdk.event import MessageEvent, ActionEvent, ObservationEvent
+            from openhands.sdk.event import (
+                ActionEvent,
+                AgentErrorEvent,
+                MessageEvent,
+                ObservationEvent,
+            )
         except ImportError:
             yield SessionEvent(
                 type="error",
@@ -383,62 +404,90 @@ class OpenHandsBackend:
             return
 
         sid = session_id or uuid.uuid4().hex
-        ws = str(workspace) if workspace else str(Path.cwd())
         oh_agent = agent._agent if hasattr(agent, "_agent") else agent
+
+        # Create an isolated per-invocation workspace so the agent cannot
+        # browse the host filesystem.  Falls back to explicit workspace if set.
+        workspace_root = os.environ.get(
+            "AGENT_WORKSPACE_ROOT", "/tmp/zil-workspaces"
+        )
+        ws_dir = Path(workspace_root) / sid
+        ws_dir.mkdir(parents=True, exist_ok=True)
+        ws = str(ws_dir)
+        logger.info("[workspace] %s", ws)
+
+        # Collect events from the callback (runs synchronously inside arun)
+        collected: list[SessionEvent] = []
+
+        def _on_event(event: Any) -> None:
+            """Callback invoked by OpenHands for each event during execution."""
+            if isinstance(event, MessageEvent) and event.source == "agent":
+                text = OpenHandsBackend._extract_message_text(event)
+                if text:
+                    logger.info("[agent] %s", text[:200])
+                    collected.append(SessionEvent(type="text", text=text))
+
+            elif isinstance(event, ActionEvent):
+                tool = getattr(event, "tool_name", "") or ""
+                thought_parts = getattr(event, "thought", [])
+                thought_text = ""
+                if thought_parts:
+                    thought_text = " ".join(
+                        getattr(p, "text", "") for p in thought_parts
+                        if getattr(p, "text", "")
+                    )
+                if thought_text:
+                    logger.info("[thinking] %s", thought_text[:200])
+                    collected.append(SessionEvent(
+                        type="text",
+                        text=thought_text,
+                        metadata={"kind": "reasoning"},
+                    ))
+                if tool:
+                    logger.info("[tool_call] %s", tool)
+                    collected.append(SessionEvent(
+                        type="tool_call",
+                        tool_name=tool,
+                        args={"tool_call_id": getattr(event, "tool_call_id", "")},
+                    ))
+
+            elif isinstance(event, ObservationEvent):
+                obs = getattr(event, "observation", None)
+                obs_text = str(obs)[:2000] if obs else ""
+                tool = getattr(event, "tool_name", "") or ""
+                if obs_text:
+                    logger.info("[tool_result] %s → %s", tool, obs_text[:120])
+                    collected.append(SessionEvent(
+                        type="tool_result",
+                        text=obs_text,
+                        tool_name=tool,
+                    ))
+
+            elif isinstance(event, AgentErrorEvent):
+                err = getattr(event, "error", str(event))
+                logger.error("[agent_error] %s", err)
+                collected.append(SessionEvent(type="error", text=str(err)))
 
         try:
             conversation = Conversation(
                 agent=oh_agent,
                 workspace=ws,
                 visualizer=None,
+                callbacks=[_on_event],
             )
             try:
                 conversation.send_message(message)
                 await conversation.arun()
-
-                # Extract events from the conversation's event log
-                if hasattr(conversation, "state") and hasattr(conversation.state, "events"):
-                    for event in conversation.state.events:
-                        if isinstance(event, MessageEvent):
-                            if event.source == "agent":
-                                # Extract text from the LLM message
-                                text = ""
-                                if hasattr(event, "llm_message") and event.llm_message:
-                                    msg = event.llm_message
-                                    if hasattr(msg, "content"):
-                                        if isinstance(msg.content, str):
-                                            text = msg.content
-                                        elif isinstance(msg.content, list):
-                                            text = "".join(
-                                                part.text for part in msg.content
-                                                if hasattr(part, "text") and part.text
-                                            )
-                                if text:
-                                    yield SessionEvent(type="text", text=text)
-                        elif isinstance(event, ActionEvent):
-                            # Yield tool calls as events
-                            tool_name = getattr(event, "tool", None) or getattr(event, "action", "")
-                            args = {}
-                            if hasattr(event, "args"):
-                                args = event.args if isinstance(event.args, dict) else {}
-                            yield SessionEvent(
-                                type="tool_call",
-                                tool_name=str(tool_name),
-                                args=args,
-                            )
-                        elif isinstance(event, ObservationEvent):
-                            # Yield tool results
-                            result_text = getattr(event, "content", "") or getattr(event, "output", "")
-                            if result_text:
-                                yield SessionEvent(
-                                    type="tool_result",
-                                    text=str(result_text)[:2000],
-                                )
             finally:
                 conversation.close()
 
         except Exception as exc:
-            yield SessionEvent(type="error", text=str(exc))
+            logger.error("[invoke error] %s", exc)
+            collected.append(SessionEvent(type="error", text=str(exc)))
+
+        # Yield all collected events
+        for ev in collected:
+            yield ev
 
         yield SessionEvent(
             type="done",

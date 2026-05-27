@@ -454,22 +454,33 @@ def _register_a2a_endpoints(
     default=False,
     help="Enable auto-reload for development.",
 )
-def serve(project_dir: str, port: int, host: str, no_a2a: bool, reload: bool) -> None:
+@click.option(
+    "--docker",
+    is_flag=True,
+    default=False,
+    help="Build and run in a Docker container.",
+)
+@click.option(
+    "--trace", "trace_mode",
+    is_flag=True,
+    default=False,
+    help="Enable OTLP trace export.",
+)
+@click.option(
+    "--trace-console", "trace_console",
+    is_flag=True,
+    default=False,
+    help="Print spans to stderr (no collector needed).",
+)
+def serve(
+    project_dir: str, port: int, host: str, no_a2a: bool, reload: bool,
+    docker: bool, trace_mode: bool, trace_console: bool,
+) -> None:
     """Start the agent as a REST/A2A server.
 
     Exposes the agent via REST endpoints, manifest-declared webhooks,
     and optionally the A2A protocol for agent-to-agent communication.
     """
-    try:
-        import uvicorn
-    except ImportError:
-        click.echo(
-            "Error: uvicorn is required for 'zil serve'. "
-            "Install it with:  pip install 'zil-ai[serve]'",
-            err=True,
-        )
-        raise SystemExit(1) from None
-
     from rich.console import Console
 
     console = Console()
@@ -479,6 +490,51 @@ def serve(project_dir: str, port: int, host: str, no_a2a: bool, reload: bool) ->
     if not (project_path / "manifest.yaml").is_file():
         console.print("[red]Error:[/red] manifest.yaml not found.")
         raise SystemExit(1)
+
+    manifest = yaml.safe_load((project_path / "manifest.yaml").read_text())
+    agent_name = manifest.get("metadata", {}).get("name", "agent")
+
+    # ---- Docker mode --------------------------------------------------------
+    if docker:
+        from zil.commands._docker import check_docker, docker_serve
+
+        if not check_docker():
+            raise SystemExit(1)
+        docker_serve(project_path, agent_name, port, trace=trace_mode)
+        return
+
+    # ---- Tracing setup (non-Docker) -----------------------------------------
+    if trace_console:
+        from zil.sdk.telemetry import setup_console_telemetry
+
+        agent_version = manifest.get("metadata", {}).get("version", "")
+        ok = setup_console_telemetry(agent_name=agent_name, agent_version=agent_version)
+        if ok:
+            console.print("[green]✓[/green] Console tracing active — spans printed to stderr.")
+
+    if trace_mode:
+        from zil.commands.run import _resolve_otlp_endpoint
+
+        endpoint = _resolve_otlp_endpoint(project_path, manifest)
+        if endpoint:
+            os.environ.setdefault("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", endpoint)
+            console.print(f"[green]✓[/green] Tracing active — exporting to {endpoint}")
+        else:
+            console.print(
+                "[yellow]Warning:[/yellow] Tracing endpoint not configured. "
+                "Set OTEL_EXPORTER_OTLP_TRACES_ENDPOINT in your .env file."
+            )
+
+    # ---- Start server -------------------------------------------------------
+    try:
+        import uvicorn
+    except ImportError:
+        click.echo(
+            "Error: uvicorn is required for 'zil serve'. "
+            "Install it with:  pip install 'zil-ai[serve]'",
+            err=True,
+        )
+        raise SystemExit(1) from None
 
     console.print(f"[bold]zil serve[/bold] — starting agent server")
     console.print(f"  Project: {project_path}")

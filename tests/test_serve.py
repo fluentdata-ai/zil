@@ -357,6 +357,16 @@ class TestCLI:
         assert result.exit_code == 0
         assert "Start the agent as a REST/A2A server" in result.output
 
+    def test_serve_help_shows_docker_flag(self):
+        from click.testing import CliRunner
+        from zil.cli import cli
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["serve", "--help"])
+        assert "--docker" in result.output
+        assert "--trace" in result.output
+        assert "--trace-console" in result.output
+
     def test_serve_no_manifest(self, tmp_path):
         from click.testing import CliRunner
         from zil.cli import cli
@@ -364,3 +374,42 @@ class TestCLI:
         runner = CliRunner()
         result = runner.invoke(cli, ["serve", "--project-dir", str(tmp_path)])
         assert result.exit_code == 1
+
+    def test_serve_docker_no_docker_cli(self, stub_project):
+        """--docker should fail gracefully if Docker is not installed."""
+        from click.testing import CliRunner
+        from zil.cli import cli
+
+        runner = CliRunner()
+        with patch("shutil.which", return_value=None):
+            result = runner.invoke(
+                cli, ["serve", "--project-dir", str(stub_project), "--docker"]
+            )
+        assert result.exit_code == 1
+
+    def test_serve_docker_calls_docker_serve(self, stub_project):
+        """--docker should dispatch to docker_serve()."""
+        from click.testing import CliRunner
+        from zil.cli import cli
+
+        runner = CliRunner()
+        with patch("shutil.which", return_value="/usr/bin/docker"), \
+             patch("zil.commands._docker.docker_serve") as mock_ds:
+            result = runner.invoke(
+                cli, ["serve", "--project-dir", str(stub_project), "--docker"]
+            )
+        mock_ds.assert_called_once()
+        call_kwargs = mock_ds.call_args
+        assert call_kwargs[0][1] == "serve-test"  # agent_name
+
+    def test_web_deprecation_warning(self, stub_project):
+        """zil web should show deprecation warning."""
+        from click.testing import CliRunner
+        from zil.cli import cli
+
+        runner = CliRunner()
+        # zil web will fail (no module dir), but the warning should appear
+        result = runner.invoke(
+            cli, ["web", "--project-dir", str(stub_project)]
+        )
+        assert "deprecated" in result.output.lower() or "Deprecation" in result.output
