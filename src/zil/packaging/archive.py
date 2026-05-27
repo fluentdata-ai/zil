@@ -36,7 +36,7 @@ class ArchiveMetadata:
 
 
 # Directories and files to include in the archive (relative to project root)
-_BUNDLE_DIRS = ["identity", "adapters", "evals", "observability"]
+_BUNDLE_DIRS = ["identity", "adapters", "evals", "observability", "skills"]
 _BUNDLE_FILES = ["manifest.yaml"]
 
 # Default directories/files excluded when bundling tool sources.

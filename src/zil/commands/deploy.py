@@ -410,6 +410,7 @@ def _deploy_cloud_run(
         ("adapters", None),
         ("observability", None),
         ("tools", None),
+        ("skills", None),
     ]
     for name, _ in _copy_targets:
         src = project_dir / name

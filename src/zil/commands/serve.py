@@ -7,6 +7,7 @@ Starts a FastAPI application that exposes the agent via:
 - Health check
 """
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -65,10 +66,13 @@ def _create_app(
 
     # ---- Session store (in-memory) ----------------------------------------
     sessions: dict = {}
+    # Active streaming tasks — keyed by session_id so they can be cancelled
+    active_tasks: dict[str, asyncio.Task] = {}
 
     # ---- Request models ---------------------------------------------------
     class CreateSessionBody(BaseModel):
         workspace: Optional[str] = None
+        session_id: Optional[str] = None
 
     class SendMessageBody(BaseModel):
         message: str
@@ -105,19 +109,24 @@ def _create_app(
         return {"status": "ok", "agent": agent_name, "version": agent_version}
 
     # ---- Session endpoints ------------------------------------------------
+    def _get_or_create_session(session_id: str | None = None, workspace: str | None = None) -> tuple[str, Any]:
+        """Return (session_id, Session), creating one if needed."""
+        sid = session_id or uuid.uuid4().hex
+        if sid not in sessions:
+            ws = workspace or str(project_dir)
+            sessions[sid] = Session(
+                wired_agent,
+                workspace=ws,
+                session_id=sid,
+            )
+            logger.info("Session created: %s", sid)
+        return sid, sessions[sid]
+
     @app.post("/sessions", status_code=201)
     async def create_session_endpoint(body: CreateSessionBody = CreateSessionBody()):
-        """Create a new session. Optionally accepts workspace in body."""
-        workspace = body.workspace or str(project_dir)
-        session_id = uuid.uuid4().hex
-
-        session = Session(
-            wired_agent,
-            workspace=workspace,
-            session_id=session_id,
-        )
-        sessions[session_id] = session
-        return {"session_id": session_id, "workspace": workspace}
+        """Create a new session. Optionally accepts workspace and session_id in body."""
+        sid, session = _get_or_create_session(body.session_id, body.workspace)
+        return {"session_id": sid, "workspace": session.workspace}
 
     @app.post("/sessions/{session_id}/messages")
     async def send_message(session_id: str, body: SendMessageBody):
@@ -148,27 +157,43 @@ def _create_app(
     @app.get("/sessions/{session_id}/stream")
     async def stream_session(session_id: str, message: str = Query(default="")):
         """SSE stream — send a message via query param and stream events."""
-        if session_id not in sessions:
-            raise HTTPException(status_code=404, detail="Session not found")
-
         if not message:
             raise HTTPException(status_code=400, detail="'message' query param required")
 
-        session = sessions[session_id]
+        # Auto-create session on miss so the caller's ID is preserved
+        _sid, session = _get_or_create_session(session_id)
 
         async def event_generator():
-            async for event in session.stream(message):
-                data = json.dumps({
-                    "type": event.type,
-                    "text": event.text,
-                    "tool_name": event.tool_name,
-                })
-                yield f"data: {data}\n\n"
+            # Register the current task so it can be cancelled
+            current_task = asyncio.current_task()
+            if current_task:
+                active_tasks[session_id] = current_task
+            try:
+                async for event in session.stream(message):
+                    data = json.dumps({
+                        "type": event.type,
+                        "text": event.text,
+                        "tool_name": event.tool_name,
+                    })
+                    yield f"data: {data}\n\n"
+            except asyncio.CancelledError:
+                yield f'data: {{"type": "done", "text": "Cancelled by user"}}\n\n'
+            finally:
+                active_tasks.pop(session_id, None)
 
         return StreamingResponse(
             event_generator(),
             media_type="text/event-stream",
         )
+
+    @app.post("/sessions/{session_id}/cancel")
+    async def cancel_session(session_id: str):
+        """Cancel a running stream for this session."""
+        task = active_tasks.get(session_id)
+        if not task:
+            return {"status": "no_active_task", "session_id": session_id}
+        task.cancel()
+        return {"status": "cancelled", "session_id": session_id}
 
     @app.delete("/sessions/{session_id}")
     async def close_session(session_id: str):

@@ -157,6 +157,15 @@ class FrameworkBackend(Protocol):
         """
         ...
 
+    def close_session(self, session_id: str) -> None:
+        """Release backend-specific resources for a session.
+
+        Called by ``Session.close()`` to allow backends to clean up
+        any cached state (e.g., OpenHands Conversation objects,
+        persistence files).  Default implementation is a no-op.
+        """
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Backend registry

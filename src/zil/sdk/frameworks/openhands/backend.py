@@ -19,6 +19,11 @@ from zil.sdk.frameworks.base import AgentSpec
 
 logger = logging.getLogger(__name__)
 
+# Live Conversation objects keyed by session_id for multi-turn support.
+# Each entry is (conversation, queue_holder) where queue_holder is a
+# single-element list so the callback always writes to the current queue.
+_conversations: dict[str, tuple[Any, list]] = {}
+
 # ---------------------------------------------------------------------------
 # Model resolution
 # ---------------------------------------------------------------------------
@@ -128,6 +133,19 @@ class OpenHandsBackend:
         # --- System prompt (from identity/) ---
         system_prompt = spec.instructions if spec.instructions else None
 
+        # --- Skills (from spec.skills directory) ---
+        agent_context = None
+        skills_dir = getattr(spec.context, "skills_dir", None) if spec.context else None
+        if skills_dir and Path(skills_dir).is_dir():
+            oh_skills = self._load_skills_from_dir(Path(skills_dir))
+            if oh_skills:
+                try:
+                    from openhands.sdk.context import AgentContext
+                    agent_context = AgentContext(skills=oh_skills)
+                    logger.info("Loaded %d skill(s) into AgentContext", len(oh_skills))
+                except ImportError:
+                    logger.warning("Could not import AgentContext — skills unavailable")
+
         # --- Sub-agents warning ---
         if spec.sub_agent_specs:
             logger.warning(
@@ -136,19 +154,24 @@ class OpenHandsBackend:
             )
 
         # --- Build the Agent ---
-        agent = Agent(
-            llm=llm,
-            tools=tools,
-            mcp_config=mcp_config,
-            system_prompt=system_prompt,
-        )
+        agent_kwargs: dict[str, Any] = {
+            "llm": llm,
+            "tools": tools,
+            "mcp_config": mcp_config,
+            "system_prompt": system_prompt,
+        }
+        if agent_context is not None:
+            agent_kwargs["agent_context"] = agent_context
+
+        agent = Agent(**agent_kwargs)
 
         logger.info(
             "OpenHandsBackend.wire() — agent configured "
-            "(model=%s, tools=%d, mcp_servers=%d)",
+            "(model=%s, tools=%d, mcp_servers=%d, skills=%d)",
             spec.model,
             len(tools),
             len(spec.mcp_server_configs),
+            len(oh_skills) if skills_dir and Path(skills_dir).is_dir() else 0,
         )
 
         return OpenHandsWiredAgent(_agent=agent)
@@ -322,6 +345,47 @@ class OpenHandsBackend:
     # ---- helpers -----------------------------------------------------
 
     @staticmethod
+    def _load_skills_from_dir(skills_dir: Path) -> list[Any]:
+        """Load SKILL.md files from a directory into OpenHands Skill objects.
+
+        Scans skills_dir for subdirectories containing a SKILL.md file,
+        parses frontmatter (name, description) and content, and returns
+        a list of ``openhands.sdk.skills.Skill`` instances suitable for
+        ``AgentContext.skills``.
+        """
+        try:
+            from openhands.sdk.skills import Skill
+        except ImportError:
+            logger.warning("Cannot import openhands.sdk.skills.Skill — skills unavailable")
+            return []
+
+        skills: list[Any] = []
+        for subdir in sorted(skills_dir.iterdir()):
+            skill_md = subdir / "SKILL.md"
+            if not skill_md.is_file():
+                continue
+            try:
+                import frontmatter as fm
+                post = fm.load(str(skill_md))
+                name = post.metadata.get("name", subdir.name)
+                description = post.metadata.get("description", "")
+                content = post.content
+
+                skill = Skill(
+                    name=name,
+                    content=content,
+                    description=description.strip() if description else None,
+                    source=str(skill_md),
+                    is_agentskills_format=True,
+                )
+                skills.append(skill)
+                logger.info("[skill] loaded: %s", name)
+            except Exception as exc:
+                logger.warning("[skill] failed to load %s: %s", subdir.name, exc)
+
+        return skills
+
+    @staticmethod
     def _build_mcp_config(
         mcp_server_configs: list[dict[str, Any]],
     ) -> dict[str, Any]:
@@ -334,7 +398,19 @@ class OpenHandsBackend:
         OpenHands format::
 
             {"mcpServers": {"jira": {"command": "npx", "args": [...], "env": {...}}}}
+
+        Resolves ``${VAR}`` env-var placeholders in command, args, env,
+        and url values (matching what the ADK backend does via ``mcp.py``).
         """
+        import re
+
+        env_re = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+        def _resolve(value: str) -> str:
+            return env_re.sub(
+                lambda m: os.environ.get(m.group(1), m.group(0)), value
+            )
+
         if not mcp_server_configs:
             return {}
 
@@ -345,13 +421,13 @@ class OpenHandsBackend:
                 continue
             server_entry: dict[str, Any] = {}
             if "command" in cfg:
-                server_entry["command"] = cfg["command"]
+                server_entry["command"] = _resolve(cfg["command"])
             if "args" in cfg:
-                server_entry["args"] = cfg["args"]
+                server_entry["args"] = [_resolve(a) for a in cfg["args"]]
             if "env" in cfg:
-                server_entry["env"] = cfg["env"]
+                server_entry["env"] = {k: _resolve(v) for k, v in cfg["env"].items()}
             if "url" in cfg:
-                server_entry["url"] = cfg["url"]
+                server_entry["url"] = _resolve(cfg["url"])
             servers[name] = server_entry
 
         return {"mcpServers": servers} if servers else {}
@@ -382,10 +458,13 @@ class OpenHandsBackend:
     ) -> AsyncIterator:
         """Invoke the OpenHands agent and yield SessionEvents.
 
-        Uses OpenHands' Conversation API with **callbacks** so that events
-        are captured in real time (tool calls, observations, agent messages)
-        rather than being extracted post-hoc from the event log.
+        Uses OpenHands' Conversation API with **callbacks** and an
+        ``asyncio.Queue`` so that events are streamed in real time
+        (tool calls, observations, agent messages) as they happen
+        during execution.
         """
+        import asyncio
+
         from zil.sdk.session import SessionEvent
 
         try:
@@ -416,16 +495,30 @@ class OpenHandsBackend:
         ws = str(ws_dir)
         logger.info("[workspace] %s", ws)
 
-        # Collect events from the callback (runs synchronously inside arun)
-        collected: list[SessionEvent] = []
+        # Use a queue so callbacks push events in real-time while arun() runs.
+        # The queue_holder is a mutable single-element list so the callback
+        # (which is bound at conversation creation) always writes to the
+        # CURRENT invocation's queue even when the conversation is reused.
+        queue: asyncio.Queue[SessionEvent | None] = asyncio.Queue()
+
+        # Check if we already have a conversation (and its queue_holder)
+        entry = _conversations.get(sid)
+        if entry is not None:
+            queue_holder = entry[1]
+        else:
+            queue_holder = [queue]  # new holder for new conversation
+
+        # Point the holder at this invocation's queue
+        queue_holder[0] = queue
 
         def _on_event(event: Any) -> None:
             """Callback invoked by OpenHands for each event during execution."""
+            q = queue_holder[0]  # always the current queue
             if isinstance(event, MessageEvent) and event.source == "agent":
                 text = OpenHandsBackend._extract_message_text(event)
                 if text:
                     logger.info("[agent] %s", text[:200])
-                    collected.append(SessionEvent(type="text", text=text))
+                    q.put_nowait(SessionEvent(type="text", text=text))
 
             elif isinstance(event, ActionEvent):
                 tool = getattr(event, "tool_name", "") or ""
@@ -438,14 +531,14 @@ class OpenHandsBackend:
                     )
                 if thought_text:
                     logger.info("[thinking] %s", thought_text[:200])
-                    collected.append(SessionEvent(
+                    q.put_nowait(SessionEvent(
                         type="text",
                         text=thought_text,
                         metadata={"kind": "reasoning"},
                     ))
                 if tool:
                     logger.info("[tool_call] %s", tool)
-                    collected.append(SessionEvent(
+                    q.put_nowait(SessionEvent(
                         type="tool_call",
                         tool_name=tool,
                         args={"tool_call_id": getattr(event, "tool_call_id", "")},
@@ -457,7 +550,7 @@ class OpenHandsBackend:
                 tool = getattr(event, "tool_name", "") or ""
                 if obs_text:
                     logger.info("[tool_result] %s → %s", tool, obs_text[:120])
-                    collected.append(SessionEvent(
+                    q.put_nowait(SessionEvent(
                         type="tool_result",
                         text=obs_text,
                         tool_name=tool,
@@ -466,33 +559,74 @@ class OpenHandsBackend:
             elif isinstance(event, AgentErrorEvent):
                 err = getattr(event, "error", str(event))
                 logger.error("[agent_error] %s", err)
-                collected.append(SessionEvent(type="error", text=str(err)))
+                q.put_nowait(SessionEvent(type="error", text=str(err)))
 
-        try:
-            conversation = Conversation(
-                agent=oh_agent,
-                workspace=ws,
-                visualizer=None,
-                callbacks=[_on_event],
-            )
+        async def _run_agent():
+            """Run the agent in a task, then signal completion via sentinel."""
             try:
+                # Reuse an existing conversation for multi-turn, or create one
+                existing = _conversations.get(sid)
+                if existing is None:
+                    persist_root = os.environ.get(
+                        "AGENT_PERSIST_ROOT", "/tmp/zil-conversations"
+                    )
+                    persist_dir = str(Path(persist_root) / sid)
+                    # OpenHands expects conversation_id as uuid.UUID
+                    try:
+                        conv_id = uuid.UUID(sid)
+                    except ValueError:
+                        conv_id = uuid.uuid5(uuid.NAMESPACE_DNS, sid)
+                    conversation = Conversation(
+                        agent=oh_agent,
+                        workspace=ws,
+                        persistence_dir=persist_dir,
+                        conversation_id=conv_id,
+                        visualizer=None,
+                        callbacks=[_on_event],
+                        delete_on_close=False,
+                    )
+                    _conversations[sid] = (conversation, queue_holder)
+                    logger.info("[conversation] new %s", sid)
+                else:
+                    conversation = existing[0]
+                    logger.info("[conversation] reusing %s", sid)
+
                 conversation.send_message(message)
                 await conversation.arun()
+            except Exception as exc:
+                logger.error("[invoke error] %s", exc)
+                await queue.put(SessionEvent(type="error", text=str(exc)))
             finally:
-                conversation.close()
+                await queue.put(None)  # sentinel — signals end of events
 
-        except Exception as exc:
-            logger.error("[invoke error] %s", exc)
-            collected.append(SessionEvent(type="error", text=str(exc)))
+        # Start the agent execution as a background task
+        task = asyncio.create_task(_run_agent())
 
-        # Yield all collected events
-        for ev in collected:
-            yield ev
+        # Yield events from the queue as they arrive in real-time
+        while True:
+            event = await queue.get()
+            if event is None:
+                break
+            yield event
+
+        # Ensure the task is done (handles exceptions)
+        await task
 
         yield SessionEvent(
             type="done",
             metadata={"session_id": sid, "workspace": ws},
         )
+
+    def close_session(self, session_id: str) -> None:
+        """Release the cached Conversation for this session."""
+        entry = _conversations.pop(session_id, None)
+        if entry is not None:
+            conv = entry[0]
+            try:
+                conv.close()
+                logger.info("[conversation] closed %s", session_id)
+            except Exception as exc:
+                logger.warning("[conversation] close error for %s: %s", session_id, exc)
 
     def _wire_from_project(
         self, project_dir: Path, module_name: str | None = None

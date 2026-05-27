@@ -198,6 +198,8 @@ class Session:
         will raise ``RuntimeError``.
         """
         self._closed = True
+        if hasattr(self._backend, "close_session"):
+            self._backend.close_session(self._session_id)
 
 
 # ---------------------------------------------------------------------------
