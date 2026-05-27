@@ -491,6 +491,13 @@ class AdkBackend:
             session_service=session_service,
         )
 
+        # ADK requires the session to exist before run_async can reference it
+        session = await session_service.create_session(
+            app_name=app_name,
+            user_id=user_id,
+        )
+        sid = session.id
+
         content = types.Content(
             role="user",
             parts=[types.Part.from_text(text=message)],
