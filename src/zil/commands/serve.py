@@ -272,6 +272,9 @@ def _create_app(
                         payload["result"] = event.result
                     if event.metadata:
                         payload["metadata"] = event.metadata
+                        # Surface token_usage at top level for SSE consumers
+                        if "token_usage" in event.metadata:
+                            payload["token_usage"] = event.metadata["token_usage"]
                     data = json.dumps(payload)
                     yield f"data: {data}\n\n"
             except asyncio.CancelledError:

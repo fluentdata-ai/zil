@@ -28,6 +28,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`zil deploy`** — validates framework is registered before proceeding. Generates a framework-agnostic Dockerfile with `CMD ["zil", "serve"]` for the unified deploy path.
 - **`sdk/agent.py`** — ADK-specific code (`_MODEL_MAP`, `_build_generate_content_config`, `_load_skills`, `_build_sub_agents`) moved to `sdk/frameworks/adk/backend.py`. Backward-compatible re-exports retained.
 
+### Fixed
+
+- **Token tracking in `AdkBackend.invoke()`** — accumulate `usage_metadata` (prompt, completion, total token counts) from ADK runner events and include them in the `done` SessionEvent. Also feeds the `CostCallback` tracker so `zil.cost` reflects actual usage.
+- **Token tracking in `OpenHandsBackend.invoke()`** — extract `conversation_stats.get_combined_metrics()` (accumulated token usage and cost) after execution and include in the `done` SessionEvent.
+- **SSE token_usage visibility** — `zil serve` now surfaces `token_usage` at the top level of the SSE `done` event payload so downstream consumers can read it directly.
+
 ### Removed
 
 - **`zil run`** — removed. Use `zil serve` instead.

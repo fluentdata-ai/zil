@@ -515,13 +515,32 @@ class AdkBackend:
         )
 
         text_parts: list[str] = []
+        total_input_tokens = 0
+        total_output_tokens = 0
+        total_tokens = 0
+
+        # Cost callback (if cost tracking is enabled)
+        cost_cb = getattr(agent._agent, '_zil_cost', None)
+
         try:
             async for event in runner.run_async(
                 user_id=user_id,
                 session_id=adk_sid,
                 new_message=content,
             ):
-                author = getattr(event, 'author', '') or ''
+                # Accumulate token usage from ADK usage_metadata
+                usage_meta = getattr(event, 'usage_metadata', None)
+                if usage_meta:
+                    inp = getattr(usage_meta, 'prompt_token_count', 0) or 0
+                    out = getattr(usage_meta, 'candidates_token_count', 0) or 0
+                    tot = getattr(usage_meta, 'total_token_count', 0) or 0
+                    total_input_tokens += inp
+                    total_output_tokens += out
+                    total_tokens += tot or (inp + out)
+
+                    # Feed the cost tracker if present
+                    if cost_cb and hasattr(cost_cb, 'record'):
+                        cost_cb.record(input_tokens=inp, output_tokens=out)
 
                 # Emit tool_call events from function_call parts
                 for fn_call in event.get_function_calls():
@@ -554,7 +573,15 @@ class AdkBackend:
         except Exception as exc:
             yield SessionEvent(type="error", text=str(exc))
 
-        yield SessionEvent(
-            type="done",
-            metadata={"session_id": logical_sid, "app_name": getattr(agent._agent, 'name', 'zil-agent')},
-        )
+        done_metadata: dict[str, Any] = {
+            "session_id": logical_sid,
+            "app_name": getattr(agent._agent, 'name', 'zil-agent'),
+        }
+        if total_tokens > 0 or total_input_tokens > 0 or total_output_tokens > 0:
+            done_metadata["token_usage"] = {
+                "input": total_input_tokens,
+                "output": total_output_tokens,
+                "total": total_tokens,
+            }
+
+        yield SessionEvent(type="done", metadata=done_metadata)

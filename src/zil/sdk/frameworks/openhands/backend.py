@@ -612,10 +612,31 @@ class OpenHandsBackend:
         # Ensure the task is done (handles exceptions)
         await task
 
-        yield SessionEvent(
-            type="done",
-            metadata={"session_id": sid, "workspace": ws},
-        )
+        # Extract token usage from conversation stats
+        done_metadata: dict[str, Any] = {"session_id": sid, "workspace": ws}
+        try:
+            entry = _conversations.get(sid)
+            if entry is not None:
+                conv = entry[0]
+                stats = getattr(conv, 'conversation_stats', None)
+                if stats:
+                    metrics = stats.get_combined_metrics()
+                    token_usage = getattr(metrics, 'accumulated_token_usage', None)
+                    if token_usage:
+                        inp = getattr(token_usage, 'prompt_tokens', 0) or 0
+                        out = getattr(token_usage, 'completion_tokens', 0) or 0
+                        done_metadata["token_usage"] = {
+                            "input": inp,
+                            "output": out,
+                            "total": inp + out,
+                        }
+                    cost = getattr(metrics, 'accumulated_cost', 0) or 0
+                    if cost > 0:
+                        done_metadata.setdefault("token_usage", {})["cost"] = cost
+        except Exception as exc:
+            logger.warning("[metrics] failed to extract token usage: %s", exc)
+
+        yield SessionEvent(type="done", metadata=done_metadata)
 
     def close_session(self, session_id: str) -> None:
         """Release the cached Conversation for this session."""
