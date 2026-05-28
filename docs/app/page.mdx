@@ -2,6 +2,8 @@
 
 Zil is a framework for building, validating, packaging, and deploying production AI agents.
 It composes with [ADK](https://google.github.io/adk-docs/),
+[OpenHands](https://docs.all-hands.dev/),
+[A2A](https://google.github.io/A2A/),
 [MCP](https://modelcontextprotocol.io/), [DeepEval](https://github.com/confident-ai/deepeval),
 [OpenTelemetry](https://opentelemetry.io/), [and others](/technologies).
 
@@ -11,11 +13,20 @@ It composes with [ADK](https://google.github.io/adk-docs/),
 uv pip install zil-ai
 ```
 
-This gives you the `zil` CLI and the Python SDK. For agent creation with ADK:
+This gives you the `zil` CLI and the Python SDK. Add a framework extra for agent creation:
 
 ```bash
+# Google ADK (default)
 uv pip install 'zil-ai[adk]'
+
+# OpenHands
+uv pip install 'zil-ai[openhands]'
+
+# Serve mode (adds FastAPI + uvicorn)
+uv pip install 'zil-ai[adk,serve]'
 ```
+
+See [Frameworks](/frameworks) for all supported backends.
 
 ## What Zil provides
 
@@ -29,10 +40,9 @@ uv pip install 'zil-ai[adk]'
 | **`zil pack`** | Builds a versioned `.zil` archive — a portable agent artifact |
 | **`zil inspect`** | Reads a `.zil` archive without extracting it |
 | **`zil push`** | Push `.zil` archives to an OCI-compatible registry |
-| **`zil run`** | Runs your agent interactively (wraps `adk run`) |
-| **`zil web`** | Starts the ADK web UI for testing |
+| **`zil serve`** | Start the agent as a REST/A2A server with SSE streaming |
 | **`zil deploy`** | Deploy to Google Cloud Run with eval gating |
-| **`zil.create_agent()`** | Python SDK — reads your manifest and identity files, returns a wired ADK agent |
+| **`zil.create_agent()`** | Python SDK — reads your manifest and identity files, returns a wired agent |
 
 ## Quick start
 
@@ -44,11 +54,8 @@ cd my-agent && source .venv/bin/activate
 # Validate the project
 zil validate
 
-# Run the agent interactively
-zil run
-
-# Or start the ADK web UI
-zil web
+# Start the agent server
+zil serve
 ```
 
 The generated `my_agent/agent.py` wires everything automatically via the SDK:
@@ -70,7 +77,7 @@ A Zil agent project follows a standard directory structure:
 ```
 my-agent/
 ├── manifest.yaml          # Zil agent manifest (the contract)
-├── my_agent/              # ADK agent module
+├── my_agent/              # Agent module
 │   ├── __init__.py
 │   ├── agent.py           # Agent entry point
 │   ├── app.py             # (webhook) FastAPI entry point
@@ -102,7 +109,7 @@ my-agent/
 
 ## Guiding principles
 
-1. **Built on what exists.** Zil composes with ADK, MCP, DeepEval, OpenTelemetry, and [others](/technologies). We do not reinvent agent orchestration, tool protocols, evaluation, or telemetry.
+1. **Built on what exists.** Zil composes with ADK, OpenHands, A2A, MCP, DeepEval, OpenTelemetry, and [others](/technologies). We do not reinvent agent orchestration, tool protocols, evaluation, or telemetry.
 2. **Declarative-first.** The manifest is the contract. The CLI is a thin wrapper that reads, validates, and packages manifests.
 3. **No new runtime.** Agents run on whatever infrastructure you already have — Cloud Run, Bedrock, Foundry, Kubernetes.
 4. **No new registry.** Zil uses OCI-compatible registries you already have — Artifact Registry, ECR, GHCR, JFrog.
@@ -117,6 +124,7 @@ my-agent/
 
 - [Getting Started](/getting-started) — full walkthrough from install to deployed agent
 - [SDK Reference](/sdk) — `zil.create_agent()` API documentation
+- [Frameworks](/frameworks) — ADK, OpenHands, and custom backend support
 - [CLI Reference](/cli) — detailed command documentation
 - [Multi-Agent & HITL](/multi-agent) — orchestrate sub-agents with human-in-the-loop approval
 - [Skills](/skills) — reusable, discoverable agent procedures

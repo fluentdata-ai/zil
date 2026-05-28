@@ -1,0 +1,251 @@
+# Frameworks
+
+Zil is framework-agnostic. The `FrameworkBackend` protocol lets any agent framework plug into Zil's CLI, packaging, and deployment pipeline. You pick the framework; Zil handles the rest.
+
+## Supported frameworks
+
+| Framework | Install extra | `spec.runtime.framework` | Description |
+|-----------|--------------|--------------------------|-------------|
+| **[Google ADK](https://google.github.io/adk-docs/)** | `zil-ai[adk]` | `adk` | Agent orchestration with LLM routing, tool execution, multi-agent, and skills. Default framework. |
+| **[OpenHands](https://docs.all-hands.dev/)** | `zil-ai[openhands]` | `openhands` | Sandbox-based autonomous coding agent. Executes in an isolated Docker container. |
+| **Custom** | — | `custom` | Bring your own backend by implementing the `FrameworkBackend` protocol. |
+
+## Install
+
+Install the base CLI plus the framework extra you need:
+
+```bash
+# ADK (default)
+uv pip install 'zil-ai[adk]'
+
+# OpenHands
+uv pip install 'zil-ai[openhands]'
+
+# Both
+uv pip install 'zil-ai[adk,openhands]'
+
+# Serve mode (adds FastAPI + uvicorn)
+uv pip install 'zil-ai[adk,serve]'
+```
+
+## Manifest configuration
+
+Set the framework in `manifest.yaml`:
+
+```yaml
+spec:
+  runtime:
+    framework: adk          # or openhands, custom
+    language: python
+    llm:
+      adapter: ./adapters/llm.yaml
+    framework_config:       # optional, framework-specific
+      sandbox: docker
+```
+
+### `framework_config`
+
+An optional object for framework-specific settings. Passes schema validation with arbitrary keys. Each backend decides how to interpret its config.
+
+## Scaffolding
+
+```bash
+# Scaffold an ADK project (default)
+zil init my-agent
+
+# Scaffold an OpenHands project
+zil init my-agent --framework openhands
+```
+
+The `--framework` flag selects which backend generates the project files. The scaffolded `requirements.txt` uses the correct install extra (e.g., `zil-ai[adk]` vs `zil-ai[openhands]`).
+
+---
+
+## ADK
+
+[Google ADK](https://google.github.io/adk-docs/) (Agent Development Kit) is the default framework. It provides LLM routing, tool execution, multi-agent orchestration, and the web UI.
+
+### What ADK handles
+
+- **Model routing** — maps Zil's adapter config to ADK model strings via the [LiteLLM](https://docs.litellm.ai/) prefix convention (`anthropic/claude-sonnet-4-20250514`, `openai/gpt-4o`, `gemini-2.5-flash`)
+- **MCP server wiring** — transforms `spec.tools.mcp_servers` into ADK `McpToolset` instances with stdio/SSE transports
+- **Sub-agent building** — reads `spec.agents`, creates `LlmAgent` instances, wraps them as `AgentTool`
+- **Skills** — loads `SKILL.md` files via ADK's `SkillToolset`
+- **Identity composition** — merges persona, instructions, and guardrails into a single instruction string
+- **Cost tracking** — `CostCallback` extracts token usage from Gemini/OpenAI/Anthropic responses
+- **Thinking mode** — `spec.thinking_budget` enables Gemini's chain-of-thought reasoning
+
+### Install
+
+```bash
+uv pip install 'zil-ai[adk]'
+```
+
+### Agent entry point
+
+ADK agents use a `root_agent` module-level variable in `{module_name}/agent.py`:
+
+```python
+import zil
+
+root_agent = zil.create_agent(
+    tools=[],  # add your tool functions here
+)
+```
+
+`zil serve` auto-detects this entry point and loads the agent. If no custom `agent.py` exists, it falls back to `create_agent(raw=True)`.
+
+### Model resolution
+
+The ADK backend maps `adapters/llm.yaml` to ADK model strings:
+
+| Provider | Model | ADK string |
+|----------|-------|------------|
+| `anthropic` | `claude-sonnet-4-20250514` | `anthropic/claude-sonnet-4-20250514` |
+| `openai` | `gpt-4o` | `openai/gpt-4o` |
+| `vertex-ai` | `gemini-2.0-flash` | `gemini-2.0-flash` |
+| `gemini` / `vertex-ai` | `gemini-3.5-flash` | `gemini-3.5-flash` |
+
+Anthropic and OpenAI use the LiteLLM prefix convention. Vertex/Gemini models are passed directly (ADK native). Unknown providers fall through as `provider/model`.
+
+### Session management
+
+The ADK backend caches `(InMemorySessionService, Runner, user_id, adk_session_id)` per session ID. This preserves conversation history across multiple `invoke()` calls within a session. The cache is cleaned up when `close_session()` is called.
+
+### Event mapping
+
+ADK events are mapped to `SessionEvent` types:
+
+| ADK event | SessionEvent type |
+|-----------|------------------|
+| `event.get_function_calls()` | `tool_call` |
+| `event.get_function_responses()` | `tool_result` |
+| Pure text content parts | `text` |
+| Exceptions | `error` |
+| End of stream | `done` |
+
+In multi-agent hierarchies (e.g., with `AgentTool` sub-agents), events from all agents are emitted — not just the root.
+
+---
+
+## OpenHands
+
+[OpenHands](https://docs.all-hands.dev/) is a sandbox-based autonomous coding agent. It executes actions inside an isolated Docker container, making it ideal for code generation and modification tasks.
+
+### What OpenHands handles
+
+- **Sandbox execution** — runs agent actions in a Docker sandbox (configurable via `framework_config`)
+- **Conversation API** — manages stateful conversations with `send_message()` and `arun()`
+- **Event callbacks** — maps OpenHands events (`MessageEvent`, `ActionEvent`, `ObservationEvent`, `AgentErrorEvent`) to `SessionEvent` types
+
+### Install
+
+```bash
+uv pip install 'zil-ai[openhands]'
+```
+
+Docker must be available for sandbox execution.
+
+### Differences from ADK
+
+| Feature | ADK | OpenHands |
+|---------|-----|-----------|
+| **Sub-agents** (`spec.agents`) | Supported | Not supported |
+| **Skills** (`spec.skills`) | Supported via `SkillToolset` | Not supported |
+| **MCP servers** (`spec.tools`) | Wired as `McpToolset` | Not wired (agents use sandbox tools) |
+| **Model string format** | LiteLLM prefix (`provider/model`) | Direct model string |
+| **Execution environment** | In-process | Docker sandbox |
+| **Custom agent entry point** | `root_agent` in `agent.py` | Not applicable (zero-code) |
+
+### Manifest example
+
+```yaml
+apiVersion: zil/v1
+kind: Agent
+metadata:
+  name: my-coder
+  version: 0.1.0
+  description: Autonomous coding agent.
+spec:
+  runtime:
+    framework: openhands
+    language: python
+    llm:
+      adapter: ./adapters/llm.yaml
+    framework_config:
+      sandbox: docker
+  identity: ./identity
+```
+
+OpenHands agents are typically **zero-code** — you provide a manifest and identity files, but no `agent.py`. Run with:
+
+```bash
+zil serve --project-dir .
+```
+
+### Session management
+
+The OpenHands backend caches `Conversation` objects per session ID. Each `invoke()` call reuses the existing conversation, preserving history. An `asyncio.Queue` and callback pattern stream events in real time.
+
+### Event mapping
+
+| OpenHands event | SessionEvent type |
+|-----------------|------------------|
+| `MessageEvent` (source=agent) | `text` |
+| `ActionEvent` | `tool_call` |
+| `ObservationEvent` | `tool_result` |
+| `AgentErrorEvent` | `error` |
+| End of stream | `done` |
+
+---
+
+## Session API
+
+All framework backends expose a unified streaming interface via `SessionEvent`. This powers `zil serve` and the Session SDK:
+
+```python
+import zil
+
+# Create a session
+session = zil.Session(agent=my_wired_agent, workspace="/tmp/work")
+
+# Stream events
+async for event in session.stream("What files are in this repo?"):
+    print(f"[{event.type}] {event.text or event.tool_name}")
+
+# Or get an aggregated response
+response = await session.send("Summarize the README")
+print(response.text)
+
+# Clean up
+session.close()
+```
+
+### `SessionEvent` types
+
+| Type | Fields | Description |
+|------|--------|-------------|
+| `text` | `text` | Agent text output (intermediate or final) |
+| `tool_call` | `tool_name`, `args` | Agent invokes a tool |
+| `tool_result` | `tool_name`, `result` | Tool returns a result |
+| `error` | `text` | Exception during execution |
+| `done` | `metadata` | Always the last event; includes token usage |
+
+These event types are the same regardless of which framework backend is running. The UI, SSE stream, and any downstream consumer can rely on this contract.
+
+---
+
+## Validation
+
+`zil validate` checks your framework configuration:
+
+```
+✓ spec.runtime.framework — 'adk' (registered)
+✓ spec.runtime.framework — framework-specific validation passed
+```
+
+If the framework isn't installed:
+
+```
+✗ spec.runtime.framework — 'openhands' is not registered (install zil-ai[openhands])
+```

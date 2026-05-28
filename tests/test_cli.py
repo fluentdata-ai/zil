@@ -46,16 +46,6 @@ class TestCLIBasics:
         result = runner.invoke(cli, ["inspect", "--help"])
         assert result.exit_code == 0
 
-    def test_run_help(self):
-        result = runner.invoke(cli, ["run", "--help"])
-        assert result.exit_code == 0
-        assert "Run the agent" in result.output
-
-    def test_web_help(self):
-        result = runner.invoke(cli, ["web", "--help"])
-        assert result.exit_code == 0
-        assert "web UI" in result.output
-
 
 class TestInit:
     """Tests for zil init."""

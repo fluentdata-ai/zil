@@ -10,10 +10,8 @@ from zil.commands.init import init
 from zil.commands.inspect import inspect
 from zil.commands.pack import pack
 from zil.commands.push import push
-from zil.commands.run import run
 from zil.commands.serve import serve
 from zil.commands.validate import validate
-from zil.commands.web import web
 
 
 @click.group()
@@ -31,8 +29,6 @@ cli.add_command(init)
 cli.add_command(validate)
 cli.add_command(pack)
 cli.add_command(inspect)
-cli.add_command(run)
-cli.add_command(web)
 cli.add_command(eval)
 cli.add_command(deploy)
 cli.add_command(push)

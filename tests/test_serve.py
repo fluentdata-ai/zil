@@ -402,14 +402,3 @@ class TestCLI:
         call_kwargs = mock_ds.call_args
         assert call_kwargs[0][1] == "serve-test"  # agent_name
 
-    def test_web_deprecation_warning(self, stub_project):
-        """zil web should show deprecation warning."""
-        from click.testing import CliRunner
-        from zil.cli import cli
-
-        runner = CliRunner()
-        # zil web will fail (no module dir), but the warning should appear
-        result = runner.invoke(
-            cli, ["web", "--project-dir", str(stub_project)]
-        )
-        assert "deprecated" in result.output.lower() or "Deprecation" in result.output

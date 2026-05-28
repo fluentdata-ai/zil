@@ -1,6 +1,6 @@
 # CLI Reference
 
-The `zil` CLI provides ten commands for the agent development lifecycle.
+The `zil` CLI provides nine commands for the agent development lifecycle.
 
 ## `zil init`
 
@@ -21,6 +21,7 @@ zil init <name> [options]
 | Option | Values | Default | Description |
 |--------|--------|---------|-------------|
 | `--llm` | `gemini`, `anthropic`, `openai`, `vertex` | `gemini` | LLM provider |
+| `--framework` | `adk`, `openhands` | `adk` | Agent [framework](/frameworks) backend |
 | `--mcp` | `none`, `filesystem`, `git`, `custom` | `none` | Include MCP server scaffolding |
 | `--agents` | comma-separated names | — | Sub-agent names for [multi-agent](/multi-agent) scaffold (e.g. `vta,vtd`) |
 | `--skills` | comma-separated names | — | [Skill](/skills) names to scaffold in `skills/` (e.g. `fd-submit-changes,fd-run-tests`) |
@@ -549,12 +550,12 @@ zil eval generate --count 20 --category guardrails --no-review
 
 ---
 
-## `zil run`
+## `zil serve`
 
-Run the agent interactively in the terminal. Wraps `adk run` with automatic module detection.
+Start the agent as a REST/A2A server. Exposes the agent via REST endpoints with SSE streaming, manifest-declared webhooks, and optionally the [A2A protocol](https://google.github.io/A2A/) for agent-to-agent communication.
 
 ```bash
-zil run [options]
+zil serve [options]
 ```
 
 ### Options
@@ -562,66 +563,62 @@ zil run [options]
 | Option | Values | Default | Description |
 |--------|--------|---------|-------------|
 | `--project-dir` | path | `.` | Project directory |
-| `--trace` | — | — | Enable OTLP trace export to the configured endpoint |
-| `--trace-console` | — | — | Print spans to stderr (no collector needed) |
-
-### How it works
-
-1. Reads `manifest.yaml` to get the agent name
-2. Converts kebab-case to snake_case (e.g., `my-agent` → `my_agent`)
-3. If `--trace` or `--trace-console` is set, wires up telemetry from `observability/config.yaml`
-4. Runs `adk run my_agent` in the project directory
-
-### Examples
-
-```bash
-# Run from the project directory
-zil run
-
-# Run from a different directory
-zil run --project-dir ./my-agent
-
-# Run with tracing to OTLP collector
-zil run --trace
-
-# Run with console span output (no infra needed)
-zil run --trace-console
-```
-
----
-
-## `zil web`
-
-Start the ADK web UI for testing your agent in a browser. Wraps `adk web` with automatic module detection.
-
-```bash
-zil web [options]
-```
-
-### Options
-
-| Option | Values | Default | Description |
-|--------|--------|---------|-------------|
-| `--project-dir` | path | `.` | Project directory |
-| `--port` | integer | `8000` | Port for the web UI |
+| `--port` | integer | `8000` | Server port |
+| `--host` | string | `127.0.0.1` | Bind address |
+| `--no-a2a` | — | — | Disable A2A protocol endpoints |
+| `--reload` | — | — | Auto-reload on code changes (dev mode) |
 | `--docker` | — | — | Build and run in a Docker container |
 | `--trace` | — | — | Enable OTLP trace export to the configured endpoint |
 | `--trace-console` | — | — | Print spans to stderr (no collector needed) |
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Health check |
+| `POST` | `/invoke` | One-shot invoke — send a message, get a streaming SSE response |
+| `POST` | `/sessions` | Create a new session (returns session ID) |
+| `POST` | `/sessions/{id}/messages` | Send a message within an existing session (SSE stream) |
+| `GET` | `/sessions/{id}/stream` | Reconnect to an active SSE stream |
+| `DELETE` | `/sessions/{id}` | Close and clean up a session |
+| `GET` | `/.well-known/agent.json` | A2A Agent Card (auto-generated from manifest) |
+| `POST` | `/tasks/send` | A2A task endpoint (synchronous) |
+| `POST` | `/tasks/sendSubscribe` | A2A task endpoint (SSE streaming) |
+
+### SSE event stream
+
+Both `/invoke` and `/sessions/{id}/messages` return a Server-Sent Events stream. Each event is a JSON-encoded `SessionEvent`:
+
+```
+data: {"type": "tool_call", "tool_name": "search", "args": {"q": "zil"}}
+
+data: {"type": "tool_result", "tool_name": "search", "result": "..."}
+
+data: {"type": "text", "text": "Based on the search results..."}
+
+data: {"type": "done", "metadata": {"session_id": "abc-123"}}
+```
+
+Event types: `text`, `tool_call`, `tool_result`, `error`, `done`. See [Frameworks](/frameworks#session-api) for details.
 
 ### Examples
 
 ```bash
 # Start on default port
-zil web
+zil serve
 
-# Custom port
-zil web --port 3000
+# Custom port and host
+zil serve --port 3000 --host 0.0.0.0
 
-# Start with tracing enabled
-zil web --trace
+# With tracing
+zil serve --trace
+
+# Dev mode with auto-reload
+zil serve --reload
+
+# Disable A2A protocol
+zil serve --no-a2a
 ```
-
-Opens a chat interface at `http://localhost:8000` where you can interact with your agent.
 
 ### Docker mode
 
@@ -629,16 +626,16 @@ Build and run the agent in a Docker container, replicating the production enviro
 
 ```bash
 # Build image and run container
-zil web --docker
+zil serve --docker
 
 # With full observability (Grafana OTEL-LGTM stack)
-zil web --docker --trace
+zil serve --docker --trace
 
 # Custom port
-zil web --docker --port 3000
+zil serve --docker --port 3000
 ```
 
-**Dockerfile auto-regeneration** — `zil web --docker` regenerates the Dockerfile from `manifest.yaml` before every `docker build`, ensuring that `spec.runtime.dependencies` and `spec.tools.host_dependencies` are always reflected in the container. You don't need to manually edit the Dockerfile.
+**Dockerfile auto-regeneration** — `zil serve --docker` regenerates the Dockerfile from `manifest.yaml` before every `docker build`, ensuring that `spec.runtime.dependencies` and `spec.tools.host_dependencies` are always reflected in the container. You don't need to manually edit the Dockerfile.
 
 Docker runs also load both `.env` and `.env.local` files for complete environment configuration.
 
@@ -650,7 +647,7 @@ When `--docker --trace` is used, a [Grafana OTEL-LGTM](https://github.com/grafan
 
 | Service | URL |
 |---------|-----|
-| Agent web UI | `http://localhost:8000` |
+| Agent server | `http://localhost:8000` |
 | Grafana dashboard | `http://localhost:3000` |
 
 Default Grafana login: `admin` / `admin`.
@@ -666,7 +663,7 @@ Both containers stop on Ctrl+C.
 
 ## `zil deploy`
 
-Deploy the agent to Google Cloud Run. Wraps `adk deploy cloud_run` with project/region resolution, pre-deploy eval gating, and automatic project context bundling.
+Deploy the agent to Google Cloud Run with project/region resolution, pre-deploy eval gating, and automatic project context bundling.
 
 ```bash
 zil deploy [options]
@@ -680,7 +677,6 @@ zil deploy [options]
 | `--project` | string | — | GCP project (or `GOOGLE_CLOUD_PROJECT` env var) |
 | `--region` | string | — | GCP region (or `GOOGLE_CLOUD_REGION` env var) |
 | `--service` | string | agent name | Cloud Run service name |
-| `--with-ui` | — | — | Include ADK web UI in Cloud Run deploy |
 | `--trace` | — | — | Enable Cloud Trace telemetry |
 | `--skip-evals` | — | — | Skip pre-deploy eval check |
 | `--from` | ref | — | Deploy from a `.zil` file or OCI registry reference |
@@ -706,7 +702,7 @@ zil deploy [options]
      cloudbuild.googleapis.com
    ```
 
-3. **ADK installed** (included with `zil-ai[adk]`).
+3. **Agent framework installed** (e.g., `zil-ai[adk]`).
 
 ### Walkthrough
 
@@ -721,9 +717,6 @@ zil deploy
 
 # Deploy with Cloud Trace telemetry
 zil deploy --project my-project --region us-central1 --trace
-
-# Include the ADK web UI (dev/staging only)
-zil deploy --project my-project --region us-central1 --with-ui
 
 # Skip evals for a quick re-deploy
 zil deploy --project my-project --region us-central1 --skip-evals

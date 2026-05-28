@@ -17,7 +17,7 @@ Verify:
 
 ```bash
 zil --version
-# zil, version 0.1.18
+# zil, version 0.1.19
 ```
 
 ## 2. Create a project
@@ -46,15 +46,14 @@ Edit `my_agent/.env` and add your API key. The default provider is **Gemini** �
 
 For other providers, see [Adapters — LLM](/adapters/llm).
 
-## 4. Run your agent
+## 4. Start the agent server
 
 ```bash
-# Interactive CLI
-zil run
-
-# Or browser-based chat UI
-zil web
+zil serve
 ```
+
+This starts a FastAPI server with REST endpoints, SSE streaming, and A2A protocol support.
+Open `http://localhost:8000/health` to verify it's running, then send messages via the sessions API.
 
 ## 5. What to edit
 
@@ -85,9 +84,10 @@ See [SDK Reference](/sdk) for all `create_agent()` options.
 | Validate your project | `zil validate` — [CLI Reference](/cli#zil-validate) |
 | Security audit | `zil audit` — [CLI Reference](/cli#zil-audit) |
 | Write and run evals | `zil eval` — [Evaluation](/evals) |
-| Test in Docker | `zil web --docker --trace` — [CLI Reference](/cli#zil-web) |
+| Test in Docker | `zil serve --docker --trace` — [CLI Reference](/cli#zil-serve) |
 | Package and publish | `zil pack` → `zil push` — [Packaging](/packaging) |
 | Deploy to Cloud Run | `zil deploy` — [CLI Reference](/cli#zil-deploy) |
+| Choose a framework | `zil init --framework openhands` — [Frameworks](/frameworks) |
 | Multi-agent projects | `zil init --agents vta,vtd` — [Multi-Agent & HITL](/multi-agent) |
 | Add skills | `zil init --skills fd-submit-changes` — [Skills](/skills) |
 | Runtime dependencies | `spec.runtime.dependencies` — [Runtime Dependencies](/runtime-deps) |

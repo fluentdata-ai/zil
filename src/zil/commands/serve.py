@@ -24,6 +24,97 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _resolve_otlp_endpoint(project_dir: Path, manifest: dict) -> str | None:
+    """Resolve the OTLP endpoint from observability config."""
+    import yaml as _yaml
+
+    from zil.sdk.telemetry import _resolve_env_refs
+
+    obs_ref = manifest.get("spec", {}).get("observability")
+    if not obs_ref:
+        return None
+
+    obs_path = project_dir / obs_ref / "config.yaml"
+    if not obs_path.is_file():
+        return None
+
+    with open(obs_path, encoding="utf-8") as f:
+        obs_config = _yaml.safe_load(f) or {}
+
+    endpoint = obs_config.get("observability", {}).get("tracing", {}).get("endpoint", "")
+    if not endpoint:
+        return None
+
+    return _resolve_env_refs(endpoint) or None
+
+
+# ---------------------------------------------------------------------------
+# Agent loader — custom entry point or default create_agent()
+# ---------------------------------------------------------------------------
+
+
+def _load_agent(project_dir: Path, agent_name: str) -> Any:
+    """Load the agent for ``zil serve``.
+
+    If the project contains a custom agent module (``<name>/agent.py`` with a
+    ``root_agent`` attribute), import and wrap it. Otherwise fall back to the
+    standard ``create_agent(raw=True)`` path.
+    """
+    import importlib
+    import sys
+
+    from zil.sdk.frameworks.base import WiredAgent
+
+    module_dir = project_dir / agent_name
+    agent_file = module_dir / "agent.py"
+
+    if agent_file.is_file():
+        logger.info("Custom agent entry point found: %s", agent_file)
+        # Make sure the project dir is importable
+        project_str = str(project_dir)
+        if project_str not in sys.path:
+            sys.path.insert(0, project_str)
+
+        module_name = f"{agent_name}.agent"
+        try:
+            mod = importlib.import_module(module_name)
+        except Exception:
+            logger.warning(
+                "Failed to import %s — falling back to create_agent()",
+                module_name,
+                exc_info=True,
+            )
+            from zil.sdk.agent import create_agent
+            return create_agent(project_dir=project_dir, raw=True)
+
+        root_agent = getattr(mod, "root_agent", None)
+        if root_agent is None:
+            logger.warning(
+                "%s has no 'root_agent' attribute — falling back to create_agent()",
+                module_name,
+            )
+            from zil.sdk.agent import create_agent
+            return create_agent(project_dir=project_dir, raw=True)
+
+        # Wrap the raw framework agent as a WiredAgent
+        if isinstance(root_agent, WiredAgent):
+            return root_agent
+
+        from zil.sdk.session import _wrap_raw_agent
+        wrapped = _wrap_raw_agent(root_agent)
+        logger.info("Custom root_agent loaded and wrapped from %s", module_name)
+        return wrapped
+
+    # No custom entry point — use default SDK path
+    from zil.sdk.agent import create_agent
+    return create_agent(project_dir=project_dir, raw=True)
+
+
+# ---------------------------------------------------------------------------
 # FastAPI app factory
 # ---------------------------------------------------------------------------
 
@@ -60,9 +151,7 @@ def _create_app(
     agent_description = metadata.get("description", "")
 
     # ---- Wire the agent ---------------------------------------------------
-    from zil.sdk.agent import create_agent
-
-    wired_agent = create_agent(project_dir=project_dir, raw=True)
+    wired_agent = _load_agent(project_dir, agent_name)
 
     # ---- Session store (in-memory) ----------------------------------------
     sessions: dict = {}
@@ -170,11 +259,20 @@ def _create_app(
                 active_tasks[session_id] = current_task
             try:
                 async for event in session.stream(message):
-                    data = json.dumps({
+                    payload: dict[str, Any] = {
                         "type": event.type,
-                        "text": event.text,
-                        "tool_name": event.tool_name,
-                    })
+                    }
+                    if event.text is not None:
+                        payload["text"] = event.text
+                    if event.tool_name is not None:
+                        payload["tool_name"] = event.tool_name
+                    if event.args is not None:
+                        payload["args"] = event.args
+                    if event.result is not None:
+                        payload["result"] = event.result
+                    if event.metadata:
+                        payload["metadata"] = event.metadata
+                    data = json.dumps(payload)
                     yield f"data: {data}\n\n"
             except asyncio.CancelledError:
                 yield f'data: {{"type": "done", "text": "Cancelled by user"}}\n\n'
@@ -538,8 +636,6 @@ def serve(
             console.print("[green]✓[/green] Console tracing active — spans printed to stderr.")
 
     if trace_mode:
-        from zil.commands.run import _resolve_otlp_endpoint
-
         endpoint = _resolve_otlp_endpoint(project_path, manifest)
         if endpoint:
             os.environ.setdefault("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", endpoint)

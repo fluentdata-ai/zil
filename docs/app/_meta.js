@@ -3,6 +3,7 @@ export default {
   "getting-started": "Getting Started",
   cli: "CLI Reference",
   sdk: "SDK Reference",
+  frameworks: "Frameworks",
   packaging: "Packaging & Registry",
   tools: "MCP Tools",
   "multi-agent": "Multi-Agent & HITL",

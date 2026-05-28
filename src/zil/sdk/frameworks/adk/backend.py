@@ -7,6 +7,7 @@ It is the ONLY module in the Zil SDK that imports ``google.adk``.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from collections.abc import AsyncIterator
@@ -454,6 +455,10 @@ class AdkBackend:
             "agent_entry": "agent.py",
         }
 
+    # Cache of (session_service, runner, user_id, adk_session_id) per
+    # logical session so conversation history is preserved across calls.
+    _session_cache: dict[str, tuple[Any, Any, str, str]] = {}
+
     async def invoke(
         self,
         agent: AdkWiredAgent,
@@ -466,6 +471,7 @@ class AdkBackend:
 
         Uses ADK's Runner + InMemorySessionService to execute the agent
         and maps ADK events to framework-neutral SessionEvent instances.
+        Persists the session service across calls so multi-turn works.
         """
         from zil.sdk.session import SessionEvent
 
@@ -480,23 +486,28 @@ class AdkBackend:
             )
             return
 
-        sid = session_id or uuid.uuid4().hex
-        user_id = f"zil-session-{sid}"
-        app_name = getattr(agent._agent, 'name', 'zil-agent')
+        logical_sid = session_id or uuid.uuid4().hex
 
-        session_service = InMemorySessionService()
-        runner = Runner(
-            agent=agent._agent,
-            app_name=app_name,
-            session_service=session_service,
-        )
+        if logical_sid in self._session_cache:
+            session_service, runner, user_id, adk_sid = self._session_cache[logical_sid]
+        else:
+            user_id = f"zil-session-{logical_sid}"
+            app_name = getattr(agent._agent, 'name', 'zil-agent')
 
-        # ADK requires the session to exist before run_async can reference it
-        session = await session_service.create_session(
-            app_name=app_name,
-            user_id=user_id,
-        )
-        sid = session.id
+            session_service = InMemorySessionService()
+            runner = Runner(
+                agent=agent._agent,
+                app_name=app_name,
+                session_service=session_service,
+            )
+
+            # ADK requires the session to exist before run_async
+            session = await session_service.create_session(
+                app_name=app_name,
+                user_id=user_id,
+            )
+            adk_sid = session.id
+            self._session_cache[logical_sid] = (session_service, runner, user_id, adk_sid)
 
         content = types.Content(
             role="user",
@@ -507,30 +518,43 @@ class AdkBackend:
         try:
             async for event in runner.run_async(
                 user_id=user_id,
-                session_id=sid,
+                session_id=adk_sid,
                 new_message=content,
             ):
-                # Map ADK event to SessionEvent
-                if hasattr(event, 'actions') and event.actions:
-                    for action in event.actions:
-                        fn_call = getattr(action, 'function_call', None)
-                        if fn_call:
-                            yield SessionEvent(
-                                type="tool_call",
-                                tool_name=fn_call.name if hasattr(fn_call, 'name') else str(fn_call),
-                                args=dict(fn_call.args) if hasattr(fn_call, 'args') and fn_call.args else None,
-                            )
+                author = getattr(event, 'author', '') or ''
 
-                if hasattr(event, 'is_final_response') and event.is_final_response():
-                    response_text = event.content.parts[0].text if event.content and event.content.parts else ""
-                    if response_text:
-                        text_parts.append(response_text)
-                        yield SessionEvent(type="text", text=response_text)
+                # Emit tool_call events from function_call parts
+                for fn_call in event.get_function_calls():
+                    tool_label = fn_call.name or 'unknown_tool'
+                    yield SessionEvent(
+                        type="tool_call",
+                        tool_name=tool_label,
+                        args=dict(fn_call.args) if fn_call.args else None,
+                    )
+
+                # Emit tool_result events from function_response parts
+                for fn_resp in event.get_function_responses():
+                    resp_name = fn_resp.name or ''
+                    resp_data = getattr(fn_resp, 'response', None)
+                    result_text = json.dumps(resp_data) if resp_data else None
+                    yield SessionEvent(
+                        type="tool_result",
+                        tool_name=resp_name,
+                        result=result_text,
+                    )
+
+                # Emit text events (from any agent in the hierarchy)
+                if event.content and event.content.parts:
+                    for part in event.content.parts:
+                        text = getattr(part, 'text', None)
+                        if text and not event.get_function_calls() and not event.get_function_responses():
+                            text_parts.append(text)
+                            yield SessionEvent(type="text", text=text)
 
         except Exception as exc:
             yield SessionEvent(type="error", text=str(exc))
 
         yield SessionEvent(
             type="done",
-            metadata={"session_id": sid, "app_name": app_name},
+            metadata={"session_id": logical_sid, "app_name": getattr(agent._agent, 'name', 'zil-agent')},
         )

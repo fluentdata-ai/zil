@@ -75,6 +75,9 @@ class StubBackend:
         """Stub does not provide scaffold templates."""
         return None
 
+    def close_session(self, session_id: str) -> None:
+        """No-op — stub has no session state to clean up."""
+
     async def invoke(
         self,
         agent: StubWiredAgent,
