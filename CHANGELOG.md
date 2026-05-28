@@ -9,22 +9,31 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Framework Backend Abstraction (RFC-002a)** — pluggable `FrameworkBackend` protocol, `BackendRegistry`, and neutral `AgentSpec` / `WiredAgent` types. Zil now supports multiple agent frameworks behind a single interface.
-- **`StubBackend`** — test-only backend with no external dependencies, always registered. Proves the abstraction works without any real agent framework.
-- **`AdkBackend`** — encapsulates all Google ADK-specific logic (model mapping, MCP wiring, sub-agent building, local execution). Auto-registered when `google-adk` is installed.
+- **Framework Backend Abstraction** — pluggable `FrameworkBackend` protocol, `BackendRegistry`, and neutral `AgentSpec` / `WiredAgent` types. Zil now supports multiple agent frameworks behind a single interface.
+- **`AdkBackend`** — encapsulates all Google ADK-specific logic (model mapping, MCP wiring, sub-agent building, skills, local execution). Auto-registered when `google-adk` is installed.
+- **`OpenHandsBackend`** — sandbox-based autonomous coding agent backend. Auto-registered when `openhands-sdk` is installed. Install with `zil-ai[openhands]`.
+- **`StubBackend`** — test-only backend with no external dependencies, always registered.
+- **`zil serve`** — new command that starts the agent as a FastAPI server with REST sessions API (`/sessions`, `/sessions/{id}/messages`, `/sessions/{id}/stream`), one-shot `/invoke`, SSE streaming, manifest-declared webhooks, and A2A protocol endpoints (`/.well-known/agent.json`, `/tasks/send`, `/tasks/sendSubscribe`). Supports `--docker`, `--trace`, `--trace-console`, `--reload`, `--no-a2a`.
+- **Session API** — `zil.Session`, `zil.SessionEvent`, `zil.SessionResponse` exported from `zil`. Framework-neutral streaming interface for invoking agents programmatically.
+- **A2A protocol support** — `zil serve` exposes an A2A-compliant Agent Card (auto-generated from manifest) and task endpoints for agent-to-agent communication.
 - **`zil init --framework`** — new CLI flag to select the agent framework at scaffold time. Validates against registered backends; defaults to `adk`.
 - **`runtime.framework_config`** — new optional manifest field for framework-specific configuration (e.g. `sandbox: docker`). Passes schema validation with arbitrary keys.
+- **`create_agent(raw=True)`** — new parameter that returns a `WiredAgent` wrapper instead of the framework-specific agent. Required for `zil.Session`.
 - **`_check_framework()` validation** — `zil validate` now checks `runtime.framework` against registered backends and delegates framework-specific validation.
-- **Schema updates** — `runtime.framework` enum extended with `openhands`, `stub`. `framework_config` object added.
+- **Schema updates** — `runtime.framework` enum extended with `openhands`, `stub`, `custom`. `framework_config` object added.
 - **SDK exports** — `AgentSpec`, `BackendRegistry`, `FrameworkBackend`, `UnknownFrameworkError`, `WiredAgent`, `registry` now exported from `zil.sdk`.
-- **31 new tests** in `tests/test_frameworks.py` covering registry, protocols, stub backend, validation, schema, and init flag.
 
 ### Changed
 
-- **`create_agent()`** — now dispatches to the appropriate `FrameworkBackend` via the registry instead of hardcoding ADK. Returns `wired.inner` for backward compatibility.
-- **`zil run` / `zil web`** — route execution through `backend.run_local()` instead of directly calling ADK CLI.
-- **`zil deploy`** — validates framework is registered before proceeding.
+- **`create_agent()`** — now dispatches to the appropriate `FrameworkBackend` via the registry instead of hardcoding ADK. Returns `wired.inner` for backward compatibility (or `WiredAgent` when `raw=True`).
+- **`zil deploy`** — validates framework is registered before proceeding. Generates a framework-agnostic Dockerfile with `CMD ["zil", "serve"]` for the unified deploy path.
 - **`sdk/agent.py`** — ADK-specific code (`_MODEL_MAP`, `_build_generate_content_config`, `_load_skills`, `_build_sub_agents`) moved to `sdk/frameworks/adk/backend.py`. Backward-compatible re-exports retained.
+
+### Removed
+
+- **`zil run`** — removed. Use `zil serve` instead.
+- **`zil web`** — removed. Use `zil serve` instead. Docker mode is available via `zil serve --docker`.
+- **`--with-ui`** flag on `zil deploy` — removed (was ADK web UI specific).
 
 ## [0.1.18] — 2026-05-25
 

@@ -91,7 +91,7 @@ GOOGLE_API_KEY=AIzaSy...
 MCP_DB_CONNECTION_STRING=postgresql://localhost:5432/mydb
 ```
 
-When you run `zil run` or `zil web`, `zil.config` automatically loads `.env` and `.env.local` from both the project root and module directory. **Existing environment variables are never overridden** — real env vars always take precedence over file values.
+When you run `zil serve`, `zil.config` automatically loads `.env` and `.env.local` from both the project root and module directory. **Existing environment variables are never overridden** — real env vars always take precedence over file values.
 
 Load order (each fills in what's missing):
 1. `{project_root}/.env`

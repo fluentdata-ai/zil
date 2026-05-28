@@ -10,7 +10,7 @@ import zil
 agent = zil.create_agent()
 ```
 
-This returns a fully-configured [`google.adk.agents.LlmAgent`](https://adk.dev/agents/llm-agents/) with:
+This returns a fully-configured agent (the type depends on your [framework](/frameworks) — e.g., an ADK `LlmAgent` for the `adk` backend) with:
 
 - **Name and description** from `manifest.yaml` → `metadata.name`, `metadata.description`
 - **Model** resolved from `adapters/llm.yaml` → mapped to an ADK-compatible model string
@@ -58,6 +58,7 @@ All parameters are optional — by default, everything is read from the project 
 | `enable_telemetry` | `bool` | `True` | Auto-setup OTel tracing from `observability/config.yaml` |
 | `enable_guardrails` | `bool` | `True` | Load runtime guardrail engine from `identity/guardrails.yaml` |
 | `enable_cost_tracking` | `bool` | `True` | Track token usage and enforce budgets from `spec.cost` |
+| `raw` | `bool` | `False` | Return a `WiredAgent` wrapper instead of the framework-specific agent. Required when using `zil.Session`. |
 
 ## Adding tools
 
@@ -82,7 +83,7 @@ root_agent = zil.create_agent(
 )
 ```
 
-ADK automatically generates tool descriptions from the function docstrings and type hints.
+The framework backend automatically generates tool descriptions from the function docstrings and type hints.
 
 ## Model resolution
 
@@ -140,13 +141,17 @@ agent = zil.create_agent(
 
 ## Prerequisites
 
-The SDK requires `google-adk`. Install it via the `[adk]` extra:
+The SDK requires a framework backend. Install one via an optional extra:
 
 ```bash
+# Google ADK (default)
 uv pip install 'zil-ai[adk]'
+
+# OpenHands
+uv pip install 'zil-ai[openhands]'
 ```
 
-Projects scaffolded with `zil init` include this in `requirements.txt` automatically.
+Projects scaffolded with `zil init` include the correct extra in `requirements.txt` automatically. See [Frameworks](/frameworks) for details on each backend.
 
 ## Generated `agent.py`
 
@@ -160,7 +165,7 @@ root_agent = zil.create_agent(
 )
 ```
 
-The `root_agent` module-level variable is the ADK convention for agent discovery. The agent lives inside a Python package (`my_agent/`) so that both `zil run` and `adk run my_agent` can discover it.
+The `root_agent` module-level variable is the convention for agent discovery. `zil serve` loads this entry point automatically. The agent lives inside a Python package (`my_agent/`) for proper module resolution.
 
 > **Note:** Zil manifests use kebab-case names (e.g., `my-agent`), but the module directory uses snake_case (`my_agent`) to be a valid Python package. The SDK handles this conversion automatically.
 
@@ -224,6 +229,57 @@ root_agent = zil.create_agent(tools=[...])
 ```
 
 In multi-agent projects, skills are filtered per sub-agent based on `spec.agents[].tools.skills`. See [Skills](/skills) for the full guide.
+
+---
+
+## Session API
+
+The `zil.Session` class provides a framework-neutral interface for invoking agents programmatically, with streaming support:
+
+```python
+import zil
+
+# Create the agent with raw=True to get a WiredAgent
+agent = zil.create_agent(tools=[...], raw=True)
+
+# Open a session
+session = zil.Session(agent=agent, workspace="/tmp/work")
+
+# Stream events in real time
+async for event in session.stream("What files are in this repo?"):
+    print(f"[{event.type}] {event.text or event.tool_name}")
+
+# Or get an aggregated response
+response = await session.send("Summarize the README")
+print(response.text)        # Final text
+print(response.events)      # Full event list
+print(response.session_id)  # Session identifier
+
+# Clean up
+session.close()
+```
+
+### `SessionEvent`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `"text"` \| `"tool_call"` \| `"tool_result"` \| `"error"` \| `"done"` | Event kind |
+| `text` | `str \| None` | Text content (for `text` and `error` types) |
+| `tool_name` | `str \| None` | Tool name (for `tool_call` and `tool_result`) |
+| `args` | `dict \| None` | Tool arguments (for `tool_call`) |
+| `result` | `Any \| None` | Tool return value (for `tool_result`) |
+| `metadata` | `dict \| None` | Backend-specific data (token counts, session ID) |
+
+### `SessionResponse`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `text` | `str` | Final concatenated text response |
+| `events` | `list[SessionEvent]` | Full ordered event list |
+| `session_id` | `str` | Session identifier |
+| `token_usage` | `dict \| None` | Token consumption data |
+
+`zil serve` uses this same Session API internally. See [Frameworks](/frameworks#session-api) for event type details across backends.
 
 ---
 

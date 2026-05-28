@@ -4,14 +4,14 @@ Zil agents ship with pre-wired OpenTelemetry conventions for agent-specific span
 
 ## How it works
 
-Zil builds on ADK's built-in OpenTelemetry tracing. When you call `zil.create_agent()`, it:
+Zil provides built-in OpenTelemetry tracing that works across all framework backends. When you call `zil.create_agent()`, it:
 
 1. Reads `observability/config.yaml` from your project
 2. Sets standard OTel environment variables (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_SERVICE_NAME`)
 3. Injects resource attributes (`agent.name`, `agent.version`) so every span is tagged with the agent's identity
-4. Calls ADK's `maybe_set_otel_providers()` to register the OTLP exporter
+4. Registers the OTLP exporter via the framework backend's tracing setup
 
-ADK then automatically emits spans for agent invocations, LLM calls, and tool executions — following the [OpenTelemetry GenAI Semantic Conventions](https://github.com/open-telemetry/semantic-conventions/blob/main/docs/gen-ai/gen-ai-agent-spans.md).
+The framework backend then emits spans for agent invocations, LLM calls, and tool executions — following the [OpenTelemetry GenAI Semantic Conventions](https://github.com/open-telemetry/semantic-conventions/blob/main/docs/gen-ai/gen-ai-agent-spans.md).
 
 ## Configuration
 
@@ -89,15 +89,15 @@ Token and cost attributes are mandatory because they enable cost governance — 
 **Quick debugging** — print spans to stderr with no infrastructure:
 
 ```bash
-zil run --trace-console
+zil serve --trace-console
 ```
 
 This uses OpenTelemetry's `ConsoleSpanExporter` — every span is printed as it completes.
 
-**Full observability with Docker** — use `zil web --docker --trace` to get traces, metrics, and logs in one command:
+**Full observability with Docker** — use `zil serve --docker --trace` to get traces, metrics, and logs in one command:
 
 ```bash
-zil web --docker --trace
+zil serve --docker --trace
 ```
 
 This starts a [Grafana OTEL-LGTM](https://github.com/grafana/docker-otel-lgtm) container alongside your agent, providing:
@@ -108,7 +108,7 @@ This starts a [Grafana OTEL-LGTM](https://github.com/grafana/docker-otel-lgtm) c
 | **Mimir** | Metrics (request counts, latencies) | Prometheus |
 | **Loki** | Structured logs | Loki |
 
-- Agent UI: `http://localhost:8000`
+- Agent server: `http://localhost:8000`
 - Grafana: `http://localhost:3000` (login: `admin` / `admin`)
 
 To explore traces:
@@ -122,7 +122,7 @@ Both containers stop on Ctrl+C.
 
 ```bash
 export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318
-zil run --trace
+zil serve --trace
 ```
 
 ### Production (Cloud Run)
@@ -181,7 +181,7 @@ The `otlp` exporter works with any OTel-compatible backend:
 | Backend | Notes |
 |---------|-------|
 | **Google Cloud Trace** | Native GCP integration via `zil deploy --trace` |
-| **Grafana OTEL-LGTM** | Built-in with `zil web --docker --trace` (traces + metrics + logs) |
+| **Grafana OTEL-LGTM** | Built-in with `zil serve --docker --trace` (traces + metrics + logs) |
 | **Datadog** | Via OTel Collector |
 | **Honeycomb** | Direct OTLP support |
 | **Grafana Cloud** | Hosted Tempo / Mimir / Loki |
@@ -196,11 +196,11 @@ Set the collector endpoint in your `.env`:
 OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces
 ```
 
-For Google Cloud Trace, use the `--otel_to_cloud` flag with `adk web` or configure the GCP OTLP endpoint.
+For Google Cloud Trace, deploy with `zil deploy --trace` or configure the GCP OTLP endpoint.
 
 ## CLI flags
 
-Both `zil run` and `zil web` support tracing flags:
+`zil serve` supports tracing flags:
 
 | Flag | Description |
 |------|-------------|
@@ -209,11 +209,13 @@ Both `zil run` and `zil web` support tracing flags:
 
 ```bash
 # Export to OTLP collector
-zil run --trace
-zil web --trace
+zil serve --trace
 
 # Local debugging — no infra required
-zil run --trace-console
+zil serve --trace-console
+
+# Docker with full observability stack
+zil serve --docker --trace
 ```
 
 ## Validation

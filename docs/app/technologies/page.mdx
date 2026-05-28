@@ -4,17 +4,24 @@ Zil is built on open-source foundations. This page lists every notable technolog
 
 ---
 
-## Agent Framework
+## Agent Frameworks
 
 | Technology | Used for | Link |
 |-----------|----------|------|
-| **Google ADK** | Agent orchestration, LLM routing, tool execution, and the web UI. Zil's SDK returns ADK `LlmAgent` instances; the CLI wraps `adk run`, `adk web`, and `adk deploy`. | [google.github.io/adk-docs](https://google.github.io/adk-docs/) |
+| **Google ADK** | Agent orchestration, LLM routing, tool execution, multi-agent, and skills. Default framework backend — Zil dispatches to ADK via the `FrameworkBackend` protocol. | [google.github.io/adk-docs](https://google.github.io/adk-docs/) |
+| **OpenHands** | Sandbox-based autonomous coding agent. Executes actions inside an isolated Docker container. Optional framework backend (`zil-ai[openhands]`). | [docs.all-hands.dev](https://docs.all-hands.dev/) |
 
 ## Tool Protocol
 
 | Technology | Used for | Link |
 |-----------|----------|------|
-| **MCP** (Model Context Protocol) | Standardized communication between agents and tool servers via stdio or SSE transports. Zil bundles MCP server sources, manages lifecycle, and wires them as ADK toolsets. | [modelcontextprotocol.io](https://modelcontextprotocol.io/) |
+| **MCP** (Model Context Protocol) | Standardized communication between agents and tool servers via stdio or SSE transports. Zil bundles MCP server sources, manages lifecycle, and wires them as framework toolsets. | [modelcontextprotocol.io](https://modelcontextprotocol.io/) |
+
+## Agent-to-Agent
+
+| Technology | Used for | Link |
+|-----------|----------|------|
+| **A2A** (Agent-to-Agent Protocol) | Standardized agent-to-agent communication. `zil serve` exposes an A2A-compliant Agent Card at `/.well-known/agent.json` and task endpoints at `/tasks/send` and `/tasks/sendSubscribe`. | [google.github.io/A2A](https://google.github.io/A2A/) |
 
 ## LLM Providers
 
@@ -32,8 +39,8 @@ Zil is built on open-source foundations. This page lists every notable technolog
 
 | Technology | Used for | Link |
 |-----------|----------|------|
-| **OpenTelemetry** | Distributed tracing and span export. `zil run --trace` and `zil deploy --trace` export spans via OTLP. The SDK emits spans for guardrail checks, cost tracking, and MCP server calls. | [opentelemetry.io](https://opentelemetry.io/) |
-| **Grafana OTEL-LGTM** | Local dev observability stack. `zil web --docker --trace` starts a Grafana container with Tempo (traces), Mimir (metrics), and Loki (logs). | [github.com/grafana/docker-otel-lgtm](https://github.com/grafana/docker-otel-lgtm) |
+| **OpenTelemetry** | Distributed tracing and span export. `zil serve --trace` and `zil deploy --trace` export spans via OTLP. The SDK emits spans for guardrail checks, cost tracking, and MCP server calls. | [opentelemetry.io](https://opentelemetry.io/) |
+| **Grafana OTEL-LGTM** | Local dev observability stack. `zil serve --docker --trace` starts a Grafana container with Tempo (traces), Mimir (metrics), and Loki (logs). | [github.com/grafana/docker-otel-lgtm](https://github.com/grafana/docker-otel-lgtm) |
 | **Google Cloud Trace** | Production trace backend. `zil deploy --trace` configures the Cloud Run container to export spans to Cloud Trace. | [cloud.google.com/trace](https://cloud.google.com/trace) |
 
 ## Packaging & Supply Chain
@@ -48,7 +55,7 @@ Zil is built on open-source foundations. This page lists every notable technolog
 
 | Technology | Used for | Link |
 |-----------|----------|------|
-| **Docker** | Container builds for local testing (`zil web --docker`) and deployment (`zil deploy`). Zil generates Dockerfiles with host dependencies for MCP servers. | [docker.com](https://www.docker.com/) |
+| **Docker** | Container builds for local testing (`zil serve --docker`) and deployment (`zil deploy`). Zil generates Dockerfiles with host dependencies for MCP servers. | [docker.com](https://www.docker.com/) |
 | **Google Cloud Run** | Serverless container hosting. `zil deploy` builds and deploys agent containers to Cloud Run via `gcloud run deploy --source`. | [cloud.google.com/run](https://cloud.google.com/run) |
 | **Google Cloud Build** | Remote container image builds. Cloud Run deployments use Cloud Build to build Docker images from source. | [cloud.google.com/build](https://cloud.google.com/build) |
 | **Google Artifact Registry** | OCI registry for `.zil` archives and container images. Works with `zil push` for archive storage and Cloud Build for image storage. | [cloud.google.com/artifact-registry](https://cloud.google.com/artifact-registry) |
@@ -63,6 +70,8 @@ Zil is built on open-source foundations. This page lists every notable technolog
 | **JSON Schema** | Manifest schema validation. The Zil v1 manifest schema is defined as a JSON Schema document; `zil validate` checks manifests against it. | [json-schema.org](https://json-schema.org/) |
 | **PyYAML** | YAML parsing for `manifest.yaml`, adapter configs, identity files, eval suites, and observability config. | [pyyaml.org](https://pyyaml.org/) |
 | **Jinja2** | Template rendering for `zil init` project scaffolding (Dockerfile, CI pipeline, README, etc.). | [jinja.palletsprojects.com](https://jinja.palletsprojects.com/) |
+| **FastAPI** | ASGI web framework powering `zil serve`. Provides REST sessions API, SSE streaming, A2A endpoints, and webhook routing. Optional dependency (`zil-ai[serve]`). | [fastapi.tiangolo.com](https://fastapi.tiangolo.com/) |
+| **uvicorn** | ASGI server for `zil serve`. Runs the FastAPI application with optional auto-reload. Optional dependency (`zil-ai[serve]`). | [uvicorn.org](https://www.uvicorn.org/) |
 
 ## Build & Dev Tools
 

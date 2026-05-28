@@ -2,7 +2,7 @@
 # https://getzil.dev/docs
 # Source: https://github.com/fluentdata-co/zil
 # Package: pip install zil-ai
-# Version: 0.1.18
+# Version: 0.1.19
 
 ## Overview
 
@@ -17,8 +17,10 @@ for AI agents and LLMs.
 
 ## Install
 
-    pip install zil-ai          # CLI only
-    pip install 'zil-ai[adk]'   # CLI + SDK + Google ADK
+    pip install zil-ai              # CLI only
+    pip install 'zil-ai[adk]'       # CLI + SDK + Google ADK (default)
+    pip install 'zil-ai[openhands]' # CLI + SDK + OpenHands
+    pip install 'zil-ai[adk,serve]' # CLI + SDK + ADK + FastAPI server
 
 Requires Python 3.11+.
 
@@ -34,6 +36,7 @@ Scaffold a new agent project.
 
 Options:
     --llm              gemini | anthropic | openai | vertex  (default: gemini)
+    --framework        adk | openhands                        (default: adk)
     --mcp              none | filesystem | git | custom       (default: none)
     --agents           Comma-separated sub-agent names (e.g. vta,vtd)
     --skills           Comma-separated skill names (e.g. fd-submit-changes,fd-run-tests)
@@ -145,34 +148,34 @@ Options:
     --verify          Verify the cosign signature of the archive
     --key PATH        Path to cosign public key for verification
 
-### zil run
+### zil serve
 
-Run the agent interactively (wraps adk run).
+Start the agent as a REST/A2A server.
 
-    zil run [options]
-
-Options:
-    --project-dir DIRECTORY  Project directory (default: .)
-    --trace                  Enable OTLP trace export
-    --trace-console          Print spans to stderr (no collector needed)
-
-Reads manifest.yaml to detect the agent module, converts kebab-case
-name to snake_case, then runs the agent.
-
-### zil web
-
-Start the ADK web UI for testing.
-
-    zil web [options]
+    zil serve [options]
 
 Options:
     --project-dir DIRECTORY  Project directory (default: .)
-    --port INTEGER           Port for web UI (default: 8000)
+    --port INTEGER           Server port (default: 8000)
+    --host TEXT              Bind address (default: 127.0.0.1)
+    --no-a2a                 Disable A2A protocol endpoints
+    --reload                 Auto-reload on code changes (dev mode)
     --docker                 Build and run in Docker container
     --trace                  Enable OTLP trace export
     --trace-console          Print spans to stderr (no collector needed)
 
-Opens a chat interface at http://localhost:{port}.
+Endpoints:
+    GET  /health                    Health check
+    POST /invoke                    One-shot invoke (SSE stream)
+    POST /sessions                  Create session
+    POST /sessions/{id}/messages    Send message (SSE stream)
+    GET  /sessions/{id}/stream      Reconnect to active SSE stream
+    DELETE /sessions/{id}           Close session
+    GET  /.well-known/agent.json    A2A Agent Card (auto-generated)
+    POST /tasks/send                A2A task (synchronous)
+    POST /tasks/sendSubscribe       A2A task (SSE streaming)
+
+SSE events: {type: "text"|"tool_call"|"tool_result"|"error"|"done", ...}
 
 Docker mode: --docker regenerates Dockerfile from manifest.yaml before
 every build, ensuring spec.runtime.dependencies and host_dependencies
@@ -208,7 +211,6 @@ Options:
     --project TEXT           GCP project (or GOOGLE_CLOUD_PROJECT env var)
     --region TEXT            GCP region (or GOOGLE_CLOUD_REGION env var)
     --service TEXT           Cloud Run service name (default: agent name)
-    --with-ui                Include ADK web UI in Cloud Run deploy
     --trace                  Enable Cloud Trace export
     --skip-evals             Skip pre-deploy eval check
     --allow-unauthenticated  Allow unauthenticated access to the Cloud Run service
@@ -259,9 +261,10 @@ JSON output (--output json):
         enable_telemetry=True, # bool — auto-setup OTel tracing
         enable_guardrails=True,# bool — load & enforce guardrails at runtime
         enable_cost_tracking=True, # bool — track token usage from spec.cost
+        raw=False,             # bool — return WiredAgent (for zil.Session)
     )
 
-Returns a google.adk.agents.LlmAgent with:
+Returns a framework-specific agent (e.g., ADK LlmAgent) with:
 - Name and description from manifest.yaml metadata
 - Model resolved from adapters/llm.yaml
 - Instruction composed from identity/persona.md + instructions.md + guardrails.yaml
@@ -337,6 +340,40 @@ Flow: tool calls request_human_input() → records in session state →
 agent turn ends → human responds via /human/respond webhook →
 runner resumes agent with updated state → tool reads response.
 
+### zil.Session — framework-neutral invocation
+
+    import zil
+
+    agent = zil.create_agent(tools=[...], raw=True)  # returns WiredAgent
+    session = zil.Session(agent=agent, workspace="/tmp/work")
+
+    # Stream events
+    async for event in session.stream("What files are here?"):
+        print(f"[{event.type}] {event.text or event.tool_name}")
+
+    # Aggregated response
+    response = await session.send("Summarize the README")
+    print(response.text)           # final text
+    print(response.events)         # list[SessionEvent]
+    print(response.session_id)     # session identifier
+    print(response.token_usage)    # token consumption data
+
+    session.close()
+
+SessionEvent fields:
+    type        "text" | "tool_call" | "tool_result" | "error" | "done"
+    text        str | None     Text content
+    tool_name   str | None     Tool name (tool_call/tool_result)
+    args        dict | None    Tool arguments (tool_call)
+    result      Any | None     Tool return value (tool_result)
+    metadata    dict | None    Backend-specific data
+
+SessionResponse fields:
+    text          str              Final concatenated text
+    events        list[SessionEvent] Ordered event list
+    session_id    str              Session identifier
+    token_usage   dict | None      Token consumption data
+
 ### zil.sdk.setup_telemetry()
 
     from zil.sdk import setup_telemetry
@@ -348,8 +385,8 @@ runner resumes agent with updated state → tool reads response.
     )
 
 Sets OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, OTEL_SERVICE_NAME, and
-OTEL_RESOURCE_ATTRIBUTES, then calls ADK's maybe_set_otel_providers().
-Returns True if tracing was activated.
+OTEL_RESOURCE_ATTRIBUTES, then registers the OTLP exporter via the
+framework backend's tracing setup. Returns True if tracing was activated.
 
 ### zil.sdk.setup_console_telemetry()
 
@@ -735,7 +772,7 @@ Dependency types:
 Installation order: apt → apt-nodesource → apt-gh → pip → npm-global.
 curl/ca-certificates/gnupg auto-injected when needed.
 
-zil web --docker regenerates Dockerfile from manifest before every build.
+zil serve --docker regenerates Dockerfile from manifest before every build.
 zil deploy generates custom Dockerfile with ordered RUN stanzas.
 
 Preferred over spec.tools.host_dependencies for new projects.
@@ -792,21 +829,22 @@ Pack succeeds if suite_score >= pass_threshold.
 
 zil.create_agent() reads observability/config.yaml, sets standard OTel
 env vars (OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, OTEL_SERVICE_NAME,
-OTEL_RESOURCE_ATTRIBUTES), then calls ADK's maybe_set_otel_providers().
+OTEL_RESOURCE_ATTRIBUTES), then registers the OTLP exporter via the
+framework backend's tracing setup.
 
-ADK emits spans for: agent invocation, LLM generate_content, tool execution.
+The framework backend emits spans for: agent invocation, LLM calls, tool execution.
 
 ### Local development
 
     # Console output (no infra needed)
-    zil run --trace-console
+    zil serve --trace-console
 
     # Full observability stack (Grafana OTEL-LGTM)
-    zil web --docker --trace
+    zil serve --docker --trace
 
     # Manual OTLP setup
     export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318
-    zil run --trace
+    zil serve --trace
 
 ### Production
 

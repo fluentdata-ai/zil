@@ -1,6 +1,6 @@
 # Runtime Dependencies
 
-Zil lets you declaratively specify non-Python runtime dependencies in `manifest.yaml`. When you run `zil web --docker` or `zil deploy`, Zil generates ordered Dockerfile `RUN` stanzas that install these dependencies in the correct order — no manual Dockerfile editing required.
+Zil lets you declaratively specify non-Python runtime dependencies in `manifest.yaml`. When you run `zil serve --docker` or `zil deploy`, Zil generates ordered Dockerfile `RUN` stanzas that install these dependencies in the correct order — no manual Dockerfile editing required.
 
 ## Overview
 
@@ -85,11 +85,11 @@ Note that `curl`, `ca-certificates`, and `gnupg` are auto-injected when `apt-nod
 
 ## Dockerfile auto-regeneration
 
-When you run `zil web --docker`, Zil **regenerates the Dockerfile** from `manifest.yaml` before every `docker build`. This ensures that any changes to `spec.runtime.dependencies` or `spec.tools.host_dependencies` are immediately reflected in the container without manually editing the Dockerfile.
+When you run `zil serve --docker`, Zil **regenerates the Dockerfile** from `manifest.yaml` before every `docker build`. This ensures that any changes to `spec.runtime.dependencies` or `spec.tools.host_dependencies` are immediately reflected in the container without manually editing the Dockerfile.
 
 ```bash
 # The Dockerfile is regenerated automatically
-zil web --docker
+zil serve --docker
 ```
 
 This means you can treat the Dockerfile as a generated artifact — edit the manifest, and the container configuration updates automatically.

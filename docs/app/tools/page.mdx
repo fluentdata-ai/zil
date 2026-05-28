@@ -114,28 +114,25 @@ During deployment, Zil generates a custom Dockerfile that installs these package
 
 ## Local development
 
-### `zil run` / `zil web`
+### `zil serve`
 
-When you run the agent locally, the SDK resolves MCP server paths from your project directory:
+When you start the agent server locally, the SDK resolves MCP server paths from your project directory:
 
 1. If `entry_point` is set and the bundled path exists (`tools/{name}/{entry_point}`), use it
 2. Otherwise, resolve `args[0]` as a relative path from the project root
 3. The MCP server process is started as a child process using the declared `command` and `args`
 
 ```bash
-# Run the agent — MCP servers start automatically
-zil run
-
-# Or use the web UI
-zil web
+# Start the agent server — MCP servers start automatically
+zil serve
 ```
 
-### `zil web --docker`
+### `zil serve --docker`
 
 Docker mode replicates the production environment locally. The Dockerfile installs host dependencies and copies the `tools/` directory:
 
 ```bash
-zil web --docker
+zil serve --docker
 ```
 
 This builds a container with your agent, MCP server sources, and all host dependencies — identical to what gets deployed.
@@ -236,12 +233,12 @@ USER myuser
 
 ENV PATH="/home/myuser/.local/bin:$PATH"
 
-RUN pip install google-adk==1.x.x
+RUN pip install zil-ai[adk,serve]
 
-COPY --chown=myuser:myuser "agents/my_agent/" "/app/agents/my_agent/"
+COPY --chown=myuser:myuser . /app/
 
 EXPOSE 8000
-CMD adk web --port=8000 "/app/agents"
+CMD ["zil", "serve", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
 ---
@@ -389,10 +386,10 @@ spec:
 
 ```bash
 # Develop locally
-zil web
+zil serve
 
 # Test in Docker (production-like)
-zil web --docker
+zil serve --docker
 
 # Package, push, deploy
 zil pack --skip-evals
@@ -401,5 +398,5 @@ zil push dist/revreq-0.1.0.zil \
 zil deploy \
   --from us-central1-docker.pkg.dev/my-project/agents/revreq:0.1.0 \
   --project my-project --region us-central1 \
-  --env-file .env.production --with-ui
+  --env-file .env.production
 ```
