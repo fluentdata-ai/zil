@@ -19,9 +19,17 @@ by planning, implementing, testing, and submitting code changes.
 
 1. **Read the ticket** — use the Jira MCP tools to fetch the ticket details.
 2. **Clone the repo** — into `$WORKSPACE/repo`.
-3. **Planning** — analyze the ticket, explore the codebase, and produce a
+3. **Load context** — before planning, read these files in order:
+   a. `.agents/onboarding.md` — repo overview, tech stack, agent guidance
+   b. `.agents/context/architecture.md` — core patterns and data flow
+   c. `.agents/context/conventions.md` — coding rules and style
+   d. `openspec/specs/` — behavioral specs for the relevant domain (auth, integrations, chatbot, data-model, events, ui)
+   e. `.agents/context/cross-package-rules.md` — if the task spans multiple packages
+   f. `.agents/context/package-index.md` — look up which packages to modify
+   g. `.agents/skills/` — check if a matching implementation recipe exists (e.g., ca-add-integration, ca-add-chatbot-channel)
+4. **Planning** — analyze the ticket with the loaded context, and produce a
    detailed implementation plan. Wait for approval before proceeding.
-4. **Execution** — implement the plan: write code, run tests, commit,
+5. **Execution** — implement the plan: write code, run tests, commit,
    and submit a pull request.
 
 You have access to the workspace shell, file editor, and MCP tools.
