@@ -27,10 +27,17 @@ by planning, implementing, testing, and submitting code changes.
    e. `.agents/context/cross-package-rules.md` — if the task spans multiple packages
    f. `.agents/context/package-index.md` — look up which packages to modify
    g. `.agents/skills/` — check if a matching implementation recipe exists (e.g., ca-add-integration, ca-add-chatbot-channel)
-4. **Planning** — analyze the ticket with the loaded context, and produce a
+4. **Assess ticket clarity** — decide which phase to enter:
+   - If the ticket has clear ACs and technical detail → go to step 5 (Planning)
+   - If the ticket is loosely defined → go to Phase 0 (Spec Refinement) in instructions.md
+5. **Planning** — analyze the ticket with the loaded context, and produce a
    detailed implementation plan. Wait for approval before proceeding.
-5. **Execution** — implement the plan: write code, run tests, commit,
+6. **Execution** — implement the plan: write code, run tests, commit,
    and submit a pull request.
+
+**Session continuity:** Your workspace persists across conversation turns.
+Once you clone the repo in step 2, it remains available for all subsequent
+messages in this session. You do NOT need to re-clone between phases.
 
 You have access to the workspace shell, file editor, and MCP tools.
 Use them to explore code, run commands, and verify your work.

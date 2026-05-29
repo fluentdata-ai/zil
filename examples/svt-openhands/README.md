@@ -22,6 +22,78 @@ served via `zil serve`. **No app.py needed.**
 └───────────────────────────────────────────┘
 ```
 
+## Working Flow
+
+The SVT-Agent is designed to take a **loosely defined Jira ticket** and turn it
+into a reviewed, implemented pull request. It doesn't just execute — it
+**critiques, refines, and aligns on a spec** with the human before writing code.
+
+```
+┌─────────────┐       ┌──────────────────────┐       ┌─────────────┐
+│  Human      │       │  SVT-Agent           │       │  Repo       │
+│  (Jira)     │       │  (OpenHands)         │       │             │
+└──────┬──────┘       └──────────┬───────────┘       └──────┬──────┘
+       │                         │                          │
+       │  1. Loose ticket        │                          │
+       │─────────────────────────>                          │
+       │                         │  2. Clone repo           │
+       │                         │─────────────────────────>│
+       │                         │  3. Read context bank    │
+       │                         │<─────────────────────────│
+       │                         │                          │
+       │  4. Critique + questions│                          │
+       │<─────────────────────────                          │
+       │                         │                          │
+       │  5. Answers/refinement  │                          │
+       │─────────────────────────>                          │
+       │                         │                          │
+       │  6. Proposed spec       │                          │
+       │<─────────────────────────                          │
+       │                         │                          │
+       │  7. "Approved"          │                          │
+       │─────────────────────────>                          │
+       │                         │  8. Commit spec + implement
+       │                         │─────────────────────────>│
+       │                         │  9. PR                   │
+       │                         │─────────────────────────>│
+```
+
+### Phases
+
+The agent's behavior is driven by `identity/persona.md` and
+`identity/instructions.md`, which define three phases:
+
+1. **Phase 0 — Spec Refinement** (when the ticket is loosely defined)
+   - Reads the ticket, clones the repo, and loads the target repo's context bank
+     (`.agents/context/`) and existing specs (`openspec/specs/`).
+   - **Critiques** the ticket via a Jira comment: missing acceptance criteria,
+     architectural questions, cross-package implications, edge cases.
+   - Proposes a formal spec (following the repo's `spec-template.md`) and **stops**
+     to wait for human approval.
+   - On approval, commits the spec to `openspec/changes/<ticket>/` and proceeds.
+
+2. **Phase 1 — Planning**
+   - With clear acceptance criteria (or an approved spec), produces a detailed
+     implementation plan and waits for approval.
+
+3. **Phase 2 — Execution**
+   - Implements the plan, runs tests, commits, and opens a pull request.
+
+### Why this works
+
+- **Session continuity:** the agent's workspace is tied to the session, so the
+  repo cloned in step 2 persists across all turns — no re-cloning between the
+  critique, refinement, and implementation phases.
+- **Context-aware:** the agent reads the target repo's context bank before
+  proposing anything, so its specs align with existing architecture and
+  conventions.
+- **Human-in-the-loop:** the agent stops at natural decision points (spec
+  approval, plan approval) rather than running unattended end-to-end.
+
+> **Note:** This flow assumes the target repo includes a context bank
+> (`.agents/context/`) and OpenSpec specs (`openspec/`). See the
+> `composable-app` repo for a reference setup.
+
 ## Prerequisites
 
 - Python 3.12+

@@ -1,17 +1,37 @@
 ## Interaction Flow
 
+### Phase 0: Spec Refinement (when ticket is loosely defined)
+When you receive a ticket that lacks clear acceptance criteria or technical spec:
+1. Read the ticket details using the Jira MCP tools
+2. Clone the repo and load context (see persona workflow steps 2–3)
+3. Read `.agents/context/spec-template.md` for the expected spec format
+4. Read existing specs in `openspec/specs/` as examples of tone and depth
+5. **Critique the ticket** — post a Jira comment identifying:
+   - Missing or ambiguous acceptance criteria
+   - Architectural questions (which packages? new or existing?)
+   - Cross-package implications (see `cross-package-rules.md`)
+   - Edge cases and error handling gaps
+   - Suggested scope reduction if the ticket is too broad
+6. **Propose a formal spec** — write it following the spec template format
+7. Post the proposed spec as a Jira comment and **STOP — wait for approval**
+8. On approval:
+   a. Create `openspec/changes/<ticket-key>/` with `design.md` and `tasks.md`
+   b. Commit the spec to a feature branch
+   c. Proceed to Phase 1 (Planning) using the approved spec as the source of truth
+
 ### Phase 1: Planning
-When you receive a task (typically a Jira ticket key):
+When you receive a task with clear acceptance criteria (or an approved spec):
 1. Read the ticket details using the Jira MCP tools
 2. Load context from the repo (see persona workflow step 3)
 3. Read the relevant `openspec/specs/<domain>/spec.md` for behavioral contracts
-4. If a matching skill exists in `.agents/skills/`, follow it as a recipe
-5. Produce a detailed implementation plan with:
+4. If a matching `openspec/changes/<ticket>/` exists, use its `tasks.md` as the task list
+5. If a matching skill exists in `.agents/skills/`, follow it as a recipe
+6. Produce a detailed implementation plan with:
    - Files to modify/create (reference `package-index.md` for the right packages)
    - Approach and rationale (aligned with `architecture.md` patterns)
    - Cross-package implications (see `cross-package-rules.md`)
    - Test strategy
-6. Present the plan and STOP — wait for explicit approval
+7. Present the plan and STOP — wait for explicit approval
 
 ### Phase 2: Execution
 When you receive approval (e.g., "execute", "go ahead", "approved"):

@@ -1,13 +1,17 @@
-version: "1"
+apiVersion: "zil/v1"
+kind: Agent
 
 metadata:
   name: svt-openhands
-  version: 0.1.0
+  version: 0.1.1
   description: SVT coding agent — OpenHands backend with zil serve
 
 spec:
   runtime:
     framework: openhands
+    language: python
+    llm:
+      adapter: ./adapters/llm.yaml
     dependencies:
       - name: git
         type: apt
@@ -22,6 +26,7 @@ spec:
           secret_env: JIRA_WEBHOOK_SECRET
 
   identity: ./identity
+  skills: ./skills
 
   env:
     - name: LLM_API_KEY
@@ -52,6 +57,9 @@ spec:
       description: Secret for verifying Jira webhook signatures
       required: false
       secret: true
+    - name: JIRA_USER_EMAIL
+      description: Jira user email for API authentication
+      required: false
 
   tools:
     mcp_servers:
@@ -59,9 +67,11 @@ spec:
         transport: stdio
         command: "${JIRA_MCP_COMMAND}"
         args:
-          - "mcp-server-jira"
-          - "--jira-base-url"
+          - "mcp-atlassian"
+          - "--jira-url"
           - "${JIRA_BASE_URL}"
+          - "--jira-username"
+          - "${JIRA_USER_EMAIL}"
           - "--jira-token"
           - "${JIRA_API_TOKEN}"
         timeout: 30

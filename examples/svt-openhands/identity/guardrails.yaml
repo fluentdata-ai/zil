@@ -1,0 +1,8 @@
+detection:
+  prompt_injection: true
+  pii_output: false
+  pii_input: false
+denied_topics: []
+blocked_patterns: []
+output_constraints:
+  max_response_length: 16000
