@@ -168,7 +168,9 @@ class Mem0Provider:
             kwargs["metadata"] = dict(metadata)  # type: ignore[assignment]
         if infer is not None:
             kwargs["infer"] = infer  # type: ignore[assignment]
-        result = self.client.add(content, **kwargs)
+        # The managed Mem0 API expects a list of messages, not a bare string.
+        messages = [{"role": "user", "content": content}]
+        result = self.client.add(messages, **kwargs)
         return _extract_ids(result)
 
     def add_session(

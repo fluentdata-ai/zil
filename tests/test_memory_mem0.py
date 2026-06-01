@@ -52,6 +52,34 @@ def _provider(client: FakeMem0Client, **cfg_extra: Any) -> Mem0Provider:
     return Mem0Provider(cfg, client=client)
 
 
+class TestWritePayload:
+    def test_write_sends_list_not_bare_string(self):
+        # Managed Mem0 rejects a bare string ("Expected a list of items").
+        c = FakeMem0Client()
+        p = _provider(c)
+        p.write("I own INCA-225", scope=MemoryScope.AGENT,
+                keys=MemoryKeys(namespace="coding"))
+        messages, _ = c.add_calls[0]
+        assert isinstance(messages, list)
+        assert messages == [{"role": "user", "content": "I own INCA-225"}]
+
+    def test_write_forwards_infer(self):
+        c = FakeMem0Client()
+        p = _provider(c)
+        p.write("fact", scope=MemoryScope.AGENT,
+                keys=MemoryKeys(namespace="coding"), infer=False)
+        _, kwargs = c.add_calls[0]
+        assert kwargs["infer"] is False
+
+    def test_write_omits_infer_when_unset(self):
+        c = FakeMem0Client()
+        p = _provider(c)
+        p.write("fact", scope=MemoryScope.AGENT,
+                keys=MemoryKeys(namespace="coding"))
+        _, kwargs = c.add_calls[0]
+        assert "infer" not in kwargs
+
+
 class TestScopeMapping:
     def test_user_scope_maps_user_id(self):
         c = FakeMem0Client()

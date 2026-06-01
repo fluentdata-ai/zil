@@ -12,8 +12,6 @@ memories:
     metadata: { topic: testing }
   - content: "Never modify files outside the scope of the approved plan; if blocked, report clearly and stop."
     metadata: { topic: workflow }
-  - content: "New packages must include a module.json to participate in schema/API/MCP/docs composition; follow existing composition patterns in architecture.md."
-    metadata: { topic: architecture }
   - content: "For loosely-defined tickets, critique acceptance criteria and propose a formal spec as a Jira comment, then wait for approval before planning."
     metadata: { topic: workflow }
   - content: "Commit with clear messages referencing the Jira ticket key, push to a feature branch, and open a pull request against the configured base branch."
