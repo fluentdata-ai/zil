@@ -11,9 +11,10 @@ policy to the role-tagged message list before it reaches the provider:
     - ``assistant_only`` — keep only the agent's messages (its decisions /
       conclusions), dropping user chit-chat;
     - ``explicit`` — persist only lines the agent explicitly marks with
-      ``persist.marker`` (default ``MEMORY:``); each marked fact is stored
-      **verbatim** (``infer=False``) so the provider does not re-extract or
-      explode it into noise. Nothing else is stored;
+      ``persist.marker`` (default ``MEMORY:``); each marked fact is written as a
+      single, already-curated message so the provider yields ~one clean memory
+      instead of exploding a whole transcript into noise. Nothing else is
+      stored;
     - ``off`` — persist nothing.
 - **PII** — when ``persist.exclude_pii`` is set, drop (or redact) any message
   whose content matches a PII pattern, as defense-in-depth on the write path
@@ -141,7 +142,10 @@ def persist_messages(
         if seen is not None:
             facts = [f for f in facts if f not in seen]
         for fact in facts:
-            provider.write(fact, scope=scope, keys=keys, infer=False)
+            # Use the provider default (infer=True): the managed Mem0 platform
+            # stores nothing for infer=False. A single curated fact extracts to
+            # ~one clean memory, so noise stays low.
+            provider.write(fact, scope=scope, keys=keys)
             if seen is not None:
                 seen.add(fact)
         if facts:

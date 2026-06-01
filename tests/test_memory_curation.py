@@ -153,14 +153,15 @@ class TestExplicit:
         )}]
         assert extract_explicit_facts(cfg, msgs) == ["prefer squash merges"]
 
-    def test_persist_messages_writes_verbatim(self):
+    def test_persist_messages_writes_with_default_infer(self):
+        # infer=False stores nothing on managed Mem0, so explicit uses default.
         provider = _CapturingProvider()
         cfg = _cfg(strategy="explicit")
         msgs = [{"role": "assistant", "content": "MEMORY: own INCA-225"}]
         persist_messages(
             provider, cfg, scope=MemoryScope.AGENT, keys=None, messages=msgs
         )
-        assert provider.writes == [("own INCA-225", False)]
+        assert provider.writes == [("own INCA-225", None)]
         assert provider.sessions == []
 
     def test_persist_messages_explicit_no_marker_writes_nothing(self):
@@ -232,7 +233,7 @@ class TestOpenHandsWiring:
             user_id=None,
         )
         assert provider.writes == [
-            ("Jesus is the sole owner of INCA-225.", False)
+            ("Jesus is the sole owner of INCA-225.", None)
         ]
         assert provider.sessions == []
 

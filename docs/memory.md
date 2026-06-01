@@ -152,9 +152,10 @@ persist:
     - `assistant_only` — persist only the agent's messages. Note: the provider
       still LLM-extracts facts, so a verbose agent can produce many entries.
     - `explicit` — persist **only** lines the agent marks with `marker`
-      (default `MEMORY:`). Each marked fact is stored **verbatim**
-      (`infer=False`), so the provider doesn't re-extract or explode it.
-      Everything else is ignored — the highest signal-to-noise option.
+      (default `MEMORY:`). Each marked fact is written as a single curated
+      message, so the provider yields ~one clean memory instead of exploding a
+      whole transcript. Everything else is ignored — the highest
+      signal-to-noise option.
     - `off` — don't persist conversation turns (recall + seeds still work).
 - **`exclude_pii`** — when true, messages matching a PII pattern (email, phone,
   SSN, credit card, IP) are dropped or redacted on the write path, not just in
