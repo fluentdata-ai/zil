@@ -131,6 +131,50 @@ A `backend-coder` and a `frontend-coder` deployed independently with
   Zil adds long-term recall at the SDK boundary: relevant memories are injected
   before each turn and the exchange is persisted afterward.
 
+## Curating what gets persisted
+
+By default Zil hands the full turn to the provider, which LLM-extracts "facts" —
+useful, but noisy (e.g. *"User asked if they can work on ticket X"*) and a way
+for PII to leak into long-term/shared memory. The `persist` block curates the
+exchange **before** it reaches the provider (applied for both ADK and OpenHands):
+
+```yaml
+# adapters/memory.yaml
+persist:
+  strategy: explicit         # turn | assistant_only | explicit | off
+  marker: "MEMORY:"          # token the agent emits (explicit strategy)
+  exclude_pii: true          # enforce PII policy on the write path
+  pii_mode: drop             # drop | redact
+```
+
+- **`strategy`**
+    - `turn` *(default)* — persist the full user+assistant exchange.
+    - `assistant_only` — persist only the agent's messages. Note: the provider
+      still LLM-extracts facts, so a verbose agent can produce many entries.
+    - `explicit` — persist **only** lines the agent marks with `marker`
+      (default `MEMORY:`). Each marked fact is stored **verbatim**
+      (`infer=False`), so the provider doesn't re-extract or explode it.
+      Everything else is ignored — the highest signal-to-noise option.
+    - `off` — don't persist conversation turns (recall + seeds still work).
+- **`exclude_pii`** — when true, messages matching a PII pattern (email, phone,
+  SSN, credit card, IP) are dropped or redacted on the write path, not just in
+  packed seeds. Heuristic and high-signal — it does **not** detect personal
+  names, so name-bearing content can still be stored.
+
+### Explicit-signal persistence
+
+`strategy: explicit` is the antidote to noisy auto-extraction. The agent decides
+what is durable and emits it on its own line:
+
+```
+MEMORY: Jesus is the sole owner of ticket INCA-225.
+```
+
+Zil extracts the text after `marker`, applies the PII policy, and writes each
+fact verbatim. To make this work you must **instruct the agent** to emit the
+marker — see the `## Long-term Memory` section in the svt-openhands example's
+`identity/instructions.md`. Without that instruction, nothing is persisted.
+
 ## SDK
 
 Memory is on by default when an adapter is declared. Toggle it explicitly:

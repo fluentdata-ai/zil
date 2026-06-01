@@ -160,11 +160,14 @@ class Mem0Provider:
         scope: MemoryScope,
         keys: MemoryKeys,
         metadata: Mapping[str, Any] | None = None,
+        infer: bool | None = None,
     ) -> list[str]:
         self._require_scope(scope)
         kwargs = self._mem0_kwargs(scope, keys)
         if metadata:
             kwargs["metadata"] = dict(metadata)  # type: ignore[assignment]
+        if infer is not None:
+            kwargs["infer"] = infer  # type: ignore[assignment]
         result = self.client.add(content, **kwargs)
         return _extract_ids(result)
 

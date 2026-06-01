@@ -84,12 +84,15 @@ def persist_turn(
     user_id: str | None,
 ) -> None:
     """Write the completed exchange into long-term memory (best-effort)."""
+    from zil.sdk.memory.curation import persist_messages
+
     scope, keys = scope_and_keys(config, user_id=user_id)
     messages: list[dict[str, str]] = [{"role": "user", "content": user_message}]
     messages.extend(
         {"role": "assistant", "content": m} for m in agent_messages if m
     )
+    # Apply the project's persist policy (strategy + PII) before writing.
     try:
-        provider.add_session(messages, scope=scope, keys=keys)
+        persist_messages(provider, config, scope=scope, keys=keys, messages=messages)
     except Exception as exc:  # pragma: no cover - provider/runtime errors
         logger.warning("openhands memory persist failed: %s", exc)

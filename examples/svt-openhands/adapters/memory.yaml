@@ -16,7 +16,10 @@ retention:
   agent: 180d
 
 persist:
-  exclude_pii: true        # strip PII before persisting long-term/shared memory
+  strategy: explicit        # only store facts the agent marks with `marker`
+  marker: "MEMORY:"         # agent emits this token to commit a durable fact
+  exclude_pii: true         # drop PII (email/phone/SSN/card/IP) before writing
+  pii_mode: drop            # drop | redact
 
 # Ship the agent with baseline coding conventions (AGENT scope only).
 # Installed idempotently on startup; PII-filtered at pack and runtime.

@@ -52,6 +52,28 @@ class MemoryConfig:
     def exclude_pii(self) -> bool:
         return bool(self.persist.get("exclude_pii", False))
 
+    @property
+    def persist_strategy(self) -> str:
+        """How conversation turns are written to long-term memory.
+
+        - ``turn`` (default) — persist the full user+assistant exchange.
+        - ``assistant_only`` — persist only the agent's messages.
+        - ``explicit`` — persist only facts the agent explicitly marks (see
+          ``persist.marker``); nothing else is stored.
+        - ``off`` — do not persist conversation turns.
+        """
+        return str(self.persist.get("strategy", "turn")).lower()
+
+    @property
+    def persist_pii_mode(self) -> str:
+        """PII action on the write path when ``exclude_pii`` is set: drop|redact."""
+        return str(self.persist.get("pii_mode", "drop")).lower()
+
+    @property
+    def persist_marker(self) -> str:
+        """Token the agent emits to mark a fact for ``explicit`` persistence."""
+        return str(self.persist.get("marker", "MEMORY:"))
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> MemoryConfig:
         provider = data.get("provider")

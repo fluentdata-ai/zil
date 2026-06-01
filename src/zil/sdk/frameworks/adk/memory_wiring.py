@@ -65,13 +65,20 @@ def make_memory_service(provider: MemoryProvider, config: Any) -> Any:
             self._config = config
 
         async def add_session_to_memory(self, session: Any) -> None:
+            from zil.sdk.memory.curation import persist_messages
+
             messages = _events_to_messages(getattr(session, "events", []) or [])
             if not messages:
                 return
             keys = _keys_for(self._config, getattr(session, "user_id", None))
+            # Apply the project's persist policy (strategy + PII) before writing.
             try:
-                self._provider.add_session(
-                    messages, scope=primary_scope, keys=keys
+                persist_messages(
+                    self._provider,
+                    self._config,
+                    scope=primary_scope,
+                    keys=keys,
+                    messages=messages,
                 )
             except Exception as exc:  # pragma: no cover - provider/runtime errors
                 logger.warning("memory add_session failed: %s", exc)

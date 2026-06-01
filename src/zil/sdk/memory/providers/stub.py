@@ -78,6 +78,7 @@ class StubMemoryProvider:
         scope: MemoryScope,
         keys: MemoryKeys,
         metadata: Mapping[str, object] | None = None,
+        infer: bool | None = None,
     ) -> list[str]:
         self._require_scope(scope)
         part = self._partition(scope, keys)

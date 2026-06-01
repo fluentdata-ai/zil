@@ -130,8 +130,13 @@ class MemoryProvider(Protocol):
         scope: MemoryScope,
         keys: MemoryKeys,
         metadata: Mapping[str, Any] | None = None,
+        infer: bool | None = None,
     ) -> list[str]:
-        """Persist a single memory string. Returns created memory id(s)."""
+        """Persist a single memory string. Returns created memory id(s).
+
+        ``infer=False`` stores ``content`` verbatim (no provider-side fact
+        extraction); ``None`` leaves the provider default.
+        """
         ...
 
     def add_session(

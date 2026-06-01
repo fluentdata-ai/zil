@@ -323,6 +323,28 @@ class TestValidation:
         fails = [c.message for c in result.checks if c.status == "fail"]
         assert any("must be an http(s) URL" in m for m in fails)
 
+    def test_invalid_persist_strategy_fails(self, tmp_path):
+        proj = _write_project(
+            tmp_path,
+            {"provider": "mem0", "mode": "managed", "scopes": ["agent"],
+             "namespace": "coding", "retention": {"agent": "90d"},
+             "persist": {"exclude_pii": True, "strategy": "bogus"}},
+        )
+        result = validate_project(proj)
+        fails = [c.message for c in result.checks if c.status == "fail"]
+        assert any("persist.strategy" in m for m in fails)
+
+    def test_assistant_only_strategy_passes(self, tmp_path):
+        proj = _write_project(
+            tmp_path,
+            {"provider": "mem0", "mode": "managed", "scopes": ["agent"],
+             "namespace": "coding", "retention": {"agent": "90d"},
+             "persist": {"exclude_pii": True, "strategy": "assistant_only"}},
+        )
+        result = validate_project(proj)
+        passes = [c.message for c in result.checks if c.status == "pass"]
+        assert any("persist.strategy=assistant_only" in m for m in passes)
+
     def test_host_from_env_passes(self, tmp_path):
         proj = _write_project(
             tmp_path,

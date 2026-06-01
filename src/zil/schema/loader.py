@@ -1037,6 +1037,24 @@ def _check_memory(project_dir: Path, manifest: dict, result: ValidationResult) -
             )
         )
 
+    # Persist curation policy must be a known strategy.
+    _valid_strategies = {"turn", "assistant_only", "explicit", "off"}
+    if config.persist_strategy not in _valid_strategies:
+        result.checks.append(
+            CheckResult(
+                "fail",
+                f"{mem_ref} — persist.strategy {config.persist_strategy!r} is "
+                f"invalid (expected one of {sorted(_valid_strategies)})",
+            )
+        )
+    elif config.persist_strategy != "turn":
+        result.checks.append(
+            CheckResult(
+                "pass",
+                f"{mem_ref} — persist.strategy={config.persist_strategy}",
+            )
+        )
+
     # Long-term scopes should declare retention.
     for scope in requested:
         if scope in long_term and scope.value not in (config.retention or {}):

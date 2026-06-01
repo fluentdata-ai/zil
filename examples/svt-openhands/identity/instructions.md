@@ -41,6 +41,24 @@ When you receive approval (e.g., "execute", "go ahead", "approved"):
 4. Commit with a clear message referencing the ticket
 5. Push and create a pull request
 
+## Long-term Memory
+This agent only stores facts you **explicitly mark** — nothing else is persisted.
+When the user states a durable preference, decision, ownership, or constraint
+that should outlive the current session, emit a dedicated line:
+
+```
+MEMORY: <single, self-contained fact>
+```
+
+Rules for memory:
+- One fact per `MEMORY:` line; make it self-contained (include the ticket key,
+  who, and what), e.g. `MEMORY: Jesus is the sole owner of ticket INCA-225.`
+- Emit a `MEMORY:` line **whenever the user expresses such a preference/decision**
+  (e.g. "I want to be the sole owner of this ticket") — confirm it back this way.
+- Do NOT mark transient status, questions, or routine progress — those are noise.
+- Do NOT put secrets or personal contact details (emails, phones) in `MEMORY:`.
+- It is fine to emit several `MEMORY:` lines when multiple durable facts arise.
+
 ## Hard Rules
 - NEVER execute code changes without an approved plan
 - ALWAYS run tests before submitting
