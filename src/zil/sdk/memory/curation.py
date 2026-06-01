@@ -118,12 +118,19 @@ def persist_messages(
     scope: Any,
     keys: Any,
     messages: Sequence[Mapping[str, Any]],
+    seen: set[str] | None = None,
 ) -> None:
     """Apply the persist policy and write to ``provider`` accordingly.
 
     - ``off`` — no-op.
     - ``explicit`` — write each marked fact verbatim (``infer=False``).
     - otherwise — curate the message list and ``add_session``.
+
+    ``seen`` is an optional set of already-persisted explicit facts. Callers
+    that re-send the full conversation each turn (e.g. ADK passes the whole
+    session) should pass a per-session set so a marked fact is written once,
+    not re-written on every subsequent turn. Newly written facts are added to
+    the set in place.
     """
     strategy = _strategy(config)
     if strategy == "off":
@@ -131,8 +138,12 @@ def persist_messages(
 
     if strategy == "explicit":
         facts = extract_explicit_facts(config, messages)
+        if seen is not None:
+            facts = [f for f in facts if f not in seen]
         for fact in facts:
             provider.write(fact, scope=scope, keys=keys, infer=False)
+            if seen is not None:
+                seen.add(fact)
         if facts:
             logger.info("memory persist: stored %d explicit fact(s)", len(facts))
         return

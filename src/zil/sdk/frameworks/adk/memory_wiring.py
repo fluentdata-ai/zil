@@ -63,6 +63,10 @@ def make_memory_service(provider: MemoryProvider, config: Any) -> Any:
         def __init__(self) -> None:
             self._provider = provider
             self._config = config
+            # Per-session set of already-persisted explicit facts. ADK re-sends
+            # the whole session each turn, so this prevents re-writing the same
+            # marked fact on every subsequent turn.
+            self._seen: dict[str, set[str]] = {}
 
         async def add_session_to_memory(self, session: Any) -> None:
             from zil.sdk.memory.curation import persist_messages
@@ -71,6 +75,8 @@ def make_memory_service(provider: MemoryProvider, config: Any) -> Any:
             if not messages:
                 return
             keys = _keys_for(self._config, getattr(session, "user_id", None))
+            sid = str(getattr(session, "id", None) or "_default")
+            seen = self._seen.setdefault(sid, set())
             # Apply the project's persist policy (strategy + PII) before writing.
             try:
                 persist_messages(
@@ -79,6 +85,7 @@ def make_memory_service(provider: MemoryProvider, config: Any) -> Any:
                     scope=primary_scope,
                     keys=keys,
                     messages=messages,
+                    seen=seen,
                 )
             except Exception as exc:  # pragma: no cover - provider/runtime errors
                 logger.warning("memory add_session failed: %s", exc)

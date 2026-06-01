@@ -172,6 +172,36 @@ class TestExplicit:
         assert provider.writes == []
         assert provider.sessions == []
 
+    def test_seen_dedups_across_calls(self):
+        # Simulates ADK re-sending the full session each turn.
+        provider = _CapturingProvider()
+        cfg = _cfg(strategy="explicit")
+        seen: set[str] = set()
+        turn1 = [{"role": "assistant", "content": "MEMORY: own INCA-225"}]
+        turn2 = [
+            {"role": "assistant", "content": "MEMORY: own INCA-225"},
+            {"role": "assistant", "content": "MEMORY: prefer squash merges"},
+        ]
+        persist_messages(provider, cfg, scope=MemoryScope.AGENT, keys=None,
+                         messages=turn1, seen=seen)
+        persist_messages(provider, cfg, scope=MemoryScope.AGENT, keys=None,
+                         messages=turn2, seen=seen)
+        # "own INCA-225" written once; only the new fact added on turn 2.
+        assert [c for c, _ in provider.writes] == [
+            "own INCA-225", "prefer squash merges"
+        ]
+        assert seen == {"own INCA-225", "prefer squash merges"}
+
+    def test_without_seen_rewrites(self):
+        provider = _CapturingProvider()
+        cfg = _cfg(strategy="explicit")
+        msgs = [{"role": "assistant", "content": "MEMORY: own INCA-225"}]
+        persist_messages(provider, cfg, scope=MemoryScope.AGENT, keys=None,
+                         messages=msgs)
+        persist_messages(provider, cfg, scope=MemoryScope.AGENT, keys=None,
+                         messages=msgs)
+        assert len(provider.writes) == 2  # no dedup without a seen set
+
 
 class TestOpenHandsWiring:
     def test_persist_turn_applies_assistant_only(self):
