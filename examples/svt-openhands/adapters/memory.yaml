@@ -5,6 +5,9 @@
 # org/project (MEM0_ORG_ID / MEM0_PROJECT_ID) shares this knowledge.
 provider: mem0
 mode: managed
+# To use a privately-deployed Mem0 server instead of SaaS, set its base URL
+# here (or via the MEM0_API_BASE env var) — the API key still comes from env:
+# host: ${MEM0_API_BASE}
 namespace: coding
 scopes: [session, user, agent]
 

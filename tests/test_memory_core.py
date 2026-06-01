@@ -298,3 +298,42 @@ class TestValidation:
         result = validate_project(proj)
         warns = [c.message for c in result.checks if c.status == "warn"]
         assert any("MEM0_API_KEY" in m for m in warns)
+
+    def test_self_hosted_host_passes(self, tmp_path):
+        proj = _write_project(
+            tmp_path,
+            {"provider": "mem0", "mode": "managed", "scopes": ["agent"],
+             "namespace": "coding", "retention": {"agent": "90d"},
+             "persist": {"exclude_pii": True},
+             "host": "https://mem0.my-vpc.internal"},
+        )
+        result = validate_project(proj)
+        passes = [c.message for c in result.checks if c.status == "pass"]
+        assert any("self-hosted Mem0 server" in m and "host=" in m for m in passes)
+
+    def test_invalid_host_url_fails(self, tmp_path):
+        proj = _write_project(
+            tmp_path,
+            {"provider": "mem0", "mode": "managed", "scopes": ["agent"],
+             "namespace": "coding", "retention": {"agent": "90d"},
+             "persist": {"exclude_pii": True},
+             "host": "mem0.my-vpc.internal"},  # no scheme
+        )
+        result = validate_project(proj)
+        fails = [c.message for c in result.checks if c.status == "fail"]
+        assert any("must be an http(s) URL" in m for m in fails)
+
+    def test_host_from_env_passes(self, tmp_path):
+        proj = _write_project(
+            tmp_path,
+            {"provider": "mem0", "mode": "managed", "scopes": ["agent"],
+             "namespace": "coding", "retention": {"agent": "90d"},
+             "persist": {"exclude_pii": True}},
+            env=[
+                {"name": "MEM0_API_KEY", "secret": True},
+                {"name": "MEM0_API_BASE"},
+            ],
+        )
+        result = validate_project(proj)
+        passes = [c.message for c in result.checks if c.status == "pass"]
+        assert any("self-hosted Mem0 server (host from env)" in m for m in passes)

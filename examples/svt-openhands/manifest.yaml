@@ -44,6 +44,9 @@ spec:
     - name: MEM0_PROJECT_ID
       description: Mem0 project id (part of the shared-pool connection)
       required: false
+    - name: MEM0_API_BASE
+      description: Base URL of a self-hosted Mem0 server (omit to use Mem0 SaaS)
+      required: false
     - name: GITHUB_REPO_URL
       description: URL of the target repo to clone for each task
       required: true

@@ -25,7 +25,13 @@ connection, not inside a single manifest.
 **Provider** is the backing store. Built in:
 
 - `stub` — in-process, zero-dependency (local dev / tests).
-- `mem0` — [Mem0](https://mem0.ai) managed platform or self-hosted OSS.
+- `mem0` — [Mem0](https://mem0.ai), in three deployment topologies:
+
+| Topology | `memory.yaml` | Connects to | Needs |
+|----------|---------------|-------------|-------|
+| Mem0 SaaS | `mode: managed` | `api.mem0.ai` | `MEM0_API_KEY` |
+| Self-hosted Mem0 **server** | `mode: managed` + `host:` | your private Mem0 REST API | `MEM0_API_KEY` + base URL |
+| Mem0 **OSS**, in-process | `mode: self_hosted` + `config:` | your own vector DB (Qdrant/pgvector) directly | the vector/LLM/embedder config |
 
 The neutral core (`zil.sdk.memory`) imports **no** provider or framework SDK,
 so it works even when nothing else is installed.
@@ -61,6 +67,32 @@ Install the optional dependency for Mem0:
 ```bash
 uv pip install 'zil-ai[memory]'
 ```
+
+### Self-hosted Mem0 server
+
+To point the agent at a **privately-deployed Mem0 server** (its REST API running
+in your own VPC/cluster) instead of the SaaS endpoint, keep `mode: managed` and
+set a `host`. The base URL is not a secret, so it can live in `memory.yaml` or
+come from an env var; the API key/token stays in env.
+
+```yaml
+# adapters/memory.yaml
+provider: mem0
+mode: managed
+host: https://mem0.my-vpc.internal   # literal URL, or omit and use MEM0_API_BASE
+namespace: coding
+scopes: [session, user, agent]
+```
+
+```bash
+# Connection resolved as: host config → MEM0_API_BASE → MEM0_HOST → SaaS default
+export MEM0_API_KEY=...                       # server auth token
+export MEM0_API_BASE=https://mem0.my-vpc.internal
+```
+
+Declare `MEM0_API_BASE` in `spec.env` so it flows through `zil deploy`. (For an
+embedded, server-less setup, use `mode: self_hosted` + a `config:` block
+pointing Mem0 OSS at your own vector DB instead.)
 
 ### Cross-agent shared memory
 

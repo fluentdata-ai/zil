@@ -16,6 +16,7 @@ class MemoryConfig:
 
         provider: mem0
         mode: managed            # managed | self_hosted
+        host: https://mem0.my-vpc.internal  # self-hosted Mem0 server (optional)
         namespace: coding        # default AGENT-scope group key
         scopes: [session, user, agent]
         retention:
@@ -33,6 +34,7 @@ class MemoryConfig:
 
     provider: str
     mode: str = "managed"
+    host: str | None = None
     namespace: str | None = None
     scopes: list[MemoryScope] = field(default_factory=list)
     retention: dict[str, Any] = field(default_factory=dict)
@@ -62,6 +64,7 @@ class MemoryConfig:
         return cls(
             provider=provider,
             mode=data.get("mode", "managed"),
+            host=data.get("host"),
             namespace=data.get("namespace"),
             scopes=scopes,
             retention=data.get("retention") or {},

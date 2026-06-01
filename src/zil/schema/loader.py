@@ -1056,8 +1056,36 @@ def _check_memory(project_dir: Path, manifest: dict, result: ValidationResult) -
             result.checks.append(
                 CheckResult(
                     "warn",
-                    f"{mem_ref} — managed Mem0 requires MEM0_API_KEY but it is "
-                    "not declared in spec.env",
+                    f"{mem_ref} — the Mem0 Platform client requires MEM0_API_KEY "
+                    "but it is not declared in spec.env",
+                )
+            )
+
+        # Self-hosted Mem0 server: a literal host must be a valid http(s) URL.
+        host_from_env = (
+            "MEM0_API_BASE" in declared_env_names
+            or "MEM0_HOST" in declared_env_names
+        )
+        if config.host:
+            if not str(config.host).startswith(("http://", "https://")):
+                result.checks.append(
+                    CheckResult(
+                        "fail",
+                        f"{mem_ref} — host {config.host!r} must be an http(s) URL",
+                    )
+                )
+            else:
+                result.checks.append(
+                    CheckResult(
+                        "pass",
+                        f"{mem_ref} — self-hosted Mem0 server (host={config.host})",
+                    )
+                )
+        elif host_from_env:
+            result.checks.append(
+                CheckResult(
+                    "pass",
+                    f"{mem_ref} — self-hosted Mem0 server (host from env)",
                 )
             )
 

@@ -98,6 +98,16 @@ class Mem0Provider:
                 kwargs["org_id"] = org
             if project:
                 kwargs["project_id"] = project
+            # A custom host points the Platform client at a self-hosted Mem0
+            # server instead of the SaaS endpoint. Order: config → env.
+            host = (
+                self._config.host
+                or os.environ.get("MEM0_API_BASE")
+                or os.environ.get("MEM0_HOST")
+            )
+            if host:
+                kwargs["host"] = host
+                logger.debug("Mem0 using self-hosted server host=%s", host)
             self._client = MemoryClient(**kwargs)
         else:
             try:

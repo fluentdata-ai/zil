@@ -7,7 +7,11 @@ mapping (run_id/user_id/agent_id), response normalization, and delete.
 
 from __future__ import annotations
 
+import sys
+import types
 from typing import Any
+
+import pytest
 
 from zil.sdk.memory import MemoryConfig, MemoryKeys, MemoryQuery, MemoryScope
 from zil.sdk.memory.providers.mem0 import Mem0Provider
@@ -156,3 +160,60 @@ class TestList:
         p = _provider(c)
         for scope in MemoryScope:
             assert p.supports(scope)
+
+
+class _RecordingMemoryClient:
+    """Stand-in for mem0.MemoryClient that records constructor kwargs."""
+
+    last_kwargs: dict[str, Any] = {}
+
+    def __init__(self, **kwargs: Any) -> None:
+        type(self).last_kwargs = kwargs
+
+
+@pytest.fixture
+def fake_mem0(monkeypatch):
+    """Inject a fake ``mem0`` module so client construction runs without the SDK."""
+    _RecordingMemoryClient.last_kwargs = {}
+    module = types.ModuleType("mem0")
+    module.MemoryClient = _RecordingMemoryClient
+    module.Memory = object  # unused in managed mode
+    monkeypatch.setitem(sys.modules, "mem0", module)
+    # Ensure no ambient host/key leaks between tests.
+    for var in ("MEM0_API_KEY", "MEM0_API_BASE", "MEM0_HOST", "MEM0_ORG_ID",
+                "MEM0_PROJECT_ID"):
+        monkeypatch.delenv(var, raising=False)
+    return _RecordingMemoryClient
+
+
+class TestSelfHostedHost:
+    def _build(self, **cfg_extra: Any) -> Mem0Provider:
+        # No client injected → forces real lazy construction via the fake module.
+        return Mem0Provider(MemoryConfig.from_dict({"provider": "mem0", **cfg_extra}))
+
+    def test_config_parses_host(self):
+        cfg = MemoryConfig.from_dict({"provider": "mem0", "host": "https://m.internal"})
+        assert cfg.host == "https://m.internal"
+
+    def test_host_from_config_forwarded(self, fake_mem0):
+        self._build(host="https://mem0.my-vpc").client
+        assert fake_mem0.last_kwargs.get("host") == "https://mem0.my-vpc"
+
+    def test_host_from_env_api_base(self, fake_mem0, monkeypatch):
+        monkeypatch.setenv("MEM0_API_BASE", "https://from-env")
+        self._build().client
+        assert fake_mem0.last_kwargs.get("host") == "https://from-env"
+
+    def test_host_from_env_mem0_host(self, fake_mem0, monkeypatch):
+        monkeypatch.setenv("MEM0_HOST", "https://legacy-env")
+        self._build().client
+        assert fake_mem0.last_kwargs.get("host") == "https://legacy-env"
+
+    def test_config_host_takes_precedence_over_env(self, fake_mem0, monkeypatch):
+        monkeypatch.setenv("MEM0_API_BASE", "https://from-env")
+        self._build(host="https://from-config").client
+        assert fake_mem0.last_kwargs.get("host") == "https://from-config"
+
+    def test_no_host_means_saas_default(self, fake_mem0):
+        self._build().client
+        assert "host" not in fake_mem0.last_kwargs
