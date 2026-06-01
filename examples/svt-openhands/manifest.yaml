@@ -27,12 +27,23 @@ spec:
 
   identity: ./identity
   skills: ./skills
+  memory: ./adapters/memory.yaml
 
   env:
     - name: LLM_API_KEY
       description: LLM API key for the model provider
       required: true
       secret: true
+    - name: MEM0_API_KEY
+      description: Mem0 API key for long-term/shared memory (managed mode)
+      required: false
+      secret: true
+    - name: MEM0_ORG_ID
+      description: Mem0 organization id (part of the shared-pool connection)
+      required: false
+    - name: MEM0_PROJECT_ID
+      description: Mem0 project id (part of the shared-pool connection)
+      required: false
     - name: GITHUB_REPO_URL
       description: URL of the target repo to clone for each task
       required: true

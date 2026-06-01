@@ -1,0 +1,21 @@
+# Long-term memory for the SVT coding agent (RFC-003).
+#
+# AGENT scope ("coding" namespace) is the cross-agent shared pool: any Zil
+# coding agent that sets the same namespace and connects to the same Mem0
+# org/project (MEM0_ORG_ID / MEM0_PROJECT_ID) shares this knowledge.
+provider: mem0
+mode: managed
+namespace: coding
+scopes: [session, user, agent]
+
+retention:
+  user: 90d
+  agent: 180d
+
+persist:
+  exclude_pii: true        # strip PII before persisting long-term/shared memory
+
+# Ship the agent with baseline coding conventions (AGENT scope only).
+# Installed idempotently on startup; PII-filtered at pack and runtime.
+seed:
+  file: ../memory/seed.yaml
