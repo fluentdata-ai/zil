@@ -24,6 +24,9 @@ class AgentSpec:
     mcp_server_names: list[str]
     description: str
     skill_names: list[str] = None  # type: ignore[assignment]
+    # Per-sub-agent memory segment (overrides the root memory namespace so a
+    # group of sub-agents can share an isolated pool — "segmented knowledge").
+    memory_namespace: str | None = None
 
     def __post_init__(self) -> None:
         if self.skill_names is None:
@@ -48,6 +51,7 @@ class ProjectContext:
         skills_dir: Path | None = None,
         runtime_deps: list[dict[str, Any]] | None = None,
         thinking_budget: int | None = None,
+        memory_config: Any | None = None,
     ) -> None:
         self.project_dir = project_dir
         self.manifest = manifest
@@ -62,6 +66,8 @@ class ProjectContext:
         self.skills_dir: Path | None = skills_dir
         self.runtime_deps: list[dict[str, Any]] = runtime_deps or []
         self.thinking_budget: int | None = thinking_budget
+        # Parsed adapters/memory.yaml (zil.sdk.memory.MemoryConfig) or None.
+        self.memory_config = memory_config
 
     @property
     def name(self) -> str:
@@ -125,6 +131,7 @@ def load_project(project_dir: Path | None = None) -> ProjectContext:
     agents = _load_agents(root, manifest, llm_adapter)
     service_config = _load_service(manifest)
     skills_dir = _load_skills_dir(root, manifest)
+    memory_config = _load_memory(root, manifest)
 
     env_declarations = manifest.get("spec", {}).get("env", [])
     cost_config = manifest.get("spec", {}).get("cost")
@@ -145,6 +152,7 @@ def load_project(project_dir: Path | None = None) -> ProjectContext:
         skills_dir=skills_dir,
         runtime_deps=runtime_deps,
         thinking_budget=int(thinking_budget) if thinking_budget is not None else None,
+        memory_config=memory_config,
     )
 
 
@@ -256,6 +264,9 @@ def _load_agents(
         # Resolve skill name references (allowlist — SkillToolset built in agent.py)
         skill_names: list[str] = (raw.get("tools") or {}).get("skills") or []
 
+        # Per-sub-agent memory segment override (spec.agents[].memory.namespace)
+        memory_namespace: str | None = (raw.get("memory") or {}).get("namespace")
+
         result.append(AgentSpec(
             name=name,
             role=role,
@@ -266,6 +277,7 @@ def _load_agents(
             mcp_server_names=mcp_server_names,
             description=description,
             skill_names=skill_names,
+            memory_namespace=memory_namespace,
         ))
 
     return result
@@ -281,6 +293,13 @@ def _load_identity_from_dir(
     guardrails_path = identity_dir / "guardrails.yaml"
     guardrails = _load_yaml(guardrails_path) if guardrails_path.is_file() else None
     return IdentityContext(persona=persona, instructions=instructions, guardrails=guardrails)
+
+
+def _load_memory(root: Path, manifest: dict[str, Any]) -> Any | None:
+    """Load adapters/memory.yaml into a MemoryConfig if spec.memory is set."""
+    from zil.sdk.memory.loader import load_memory_config
+
+    return load_memory_config(root, manifest)
 
 
 def _load_skills_dir(root: Path, manifest: dict[str, Any]) -> Path | None:

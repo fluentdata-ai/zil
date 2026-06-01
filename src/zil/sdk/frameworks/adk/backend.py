@@ -306,6 +306,16 @@ class AdkBackend:
 
         all_tools: list[Any] = list(spec.tool_callables) + mcp_toolsets
 
+        # Memory recall tool (RFC-003) — lets the agent fetch long-term memory.
+        if spec.memory_provider is not None:
+            from zil.sdk.frameworks.adk.memory_wiring import build_recall_tool
+
+            recall_tool = build_recall_tool()
+            if recall_tool is not None:
+                all_tools.append(recall_tool)
+                logger.info("Memory recall tool attached (provider=%s)",
+                            getattr(spec.memory_provider, "name", "?"))
+
         # Build sub-agents from spec.sub_agent_specs and attach as AgentTool
         enable_mcp = bool(spec.mcp_server_configs) or bool(spec.tool_callables)
         if spec.context and spec.context.agents:
@@ -333,6 +343,12 @@ class AdkBackend:
         # Attach cross-cutting callbacks
         agent._zil_guardrails = spec.guardrail_callback  # type: ignore[attr-defined]
         agent._zil_cost = spec.cost_callback  # type: ignore[attr-defined]
+
+        # Stash memory provider/config for invoke() to wire a Runner.
+        if spec.memory_provider is not None:
+            from zil.sdk.frameworks.adk.memory_wiring import attach_memory
+
+            attach_memory(agent, spec)
 
         return AdkWiredAgent(_agent=agent)
 
@@ -495,11 +511,24 @@ class AdkBackend:
             app_name = getattr(agent._agent, 'name', 'zil-agent')
 
             session_service = InMemorySessionService()
-            runner = Runner(
-                agent=agent._agent,
-                app_name=app_name,
-                session_service=session_service,
-            )
+
+            # Wire a long-term memory service if configured (RFC-003).
+            memory_service = None
+            mem_provider = getattr(agent._agent, '_zil_memory_provider', None)
+            if mem_provider is not None:
+                from zil.sdk.frameworks.adk.memory_wiring import make_memory_service
+
+                mem_config = getattr(agent._agent, '_zil_memory_config', None)
+                memory_service = make_memory_service(mem_provider, mem_config)
+
+            runner_kwargs: dict[str, Any] = {
+                "agent": agent._agent,
+                "app_name": app_name,
+                "session_service": session_service,
+            }
+            if memory_service is not None:
+                runner_kwargs["memory_service"] = memory_service
+            runner = Runner(**runner_kwargs)
 
             # ADK requires the session to exist before run_async
             session = await session_service.create_session(
@@ -572,6 +601,22 @@ class AdkBackend:
 
         except Exception as exc:
             yield SessionEvent(type="error", text=str(exc))
+
+        # Persist the completed turn into long-term memory (RFC-003).
+        memory_service = getattr(runner, 'memory_service', None)
+        if memory_service is not None and hasattr(
+            memory_service, 'add_session_to_memory'
+        ):
+            try:
+                completed = await session_service.get_session(
+                    app_name=getattr(agent._agent, 'name', 'zil-agent'),
+                    user_id=user_id,
+                    session_id=adk_sid,
+                )
+                if completed is not None:
+                    await memory_service.add_session_to_memory(completed)
+            except Exception as exc:
+                logger.warning("memory add_session_to_memory failed: %s", exc)
 
         done_metadata: dict[str, Any] = {
             "session_id": logical_sid,

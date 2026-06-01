@@ -73,10 +73,14 @@ root_agent = zil.create_agent(
     tools=[],              # your tool functions
     enable_guardrails=True, # runtime guardrail engine
     enable_telemetry=True,  # OpenTelemetry tracing
+    enable_memory=True,     # long-term memory from adapters/memory.yaml
 )
 ```
 
 See the [SDK Reference](https://getzil.dev/docs/sdk) for the full API.
+
+Long-term **memory** is framework-neutral and works across ADK and OpenHands —
+see [`docs/memory.md`](docs/memory.md).
 
 ## Example
 

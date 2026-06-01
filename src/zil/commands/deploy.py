@@ -401,8 +401,8 @@ def _deploy_cloud_run(
     module_path = project_dir / module_dir
 
     # ADK deploy cloud_run only copies the module dir. Copy project files
-    # (manifest, identity, adapters, observability) so zil.create_agent()
-    # can find them at runtime.
+    # (manifest, identity, adapters, observability, memory) so
+    # zil.create_agent() can find them — and seed memory — at runtime.
     _copied_artifacts: list[Path] = []
     _copy_targets = [
         ("manifest.yaml", None),
@@ -411,6 +411,7 @@ def _deploy_cloud_run(
         ("observability", None),
         ("tools", None),
         ("skills", None),
+        ("memory", None),
     ]
     for name, _ in _copy_targets:
         src = project_dir / name

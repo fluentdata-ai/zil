@@ -64,6 +64,7 @@ def _run_audit(project_dir: Path) -> AuditResult:
     from zil.sdk.audit.injection_probe import check_injection_resilience
     from zil.sdk.audit.instruction_consistency import check_instruction_consistency
     from zil.sdk.audit.mcp_permissions import check_mcp_permissions
+    from zil.sdk.audit.memory_governance import check_memory_governance
     from zil.sdk.audit.output_leakage import check_output_leakage
 
     # Load project metadata
@@ -102,6 +103,7 @@ def _run_audit(project_dir: Path) -> AuditResult:
     result.sections.append(check_context_window(project_dir, guardrails_config))
     result.sections.append(check_identity_hardening(project_dir))
     result.sections.append(check_mcp_permissions(project_dir))
+    result.sections.append(check_memory_governance(project_dir))
 
     return result
 

@@ -32,6 +32,7 @@ class Category(StrEnum):
     CONTEXT_WINDOW = "context_window"
     IDENTITY_HARDENING = "identity_hardening"
     MCP_PERMISSIONS = "mcp_permissions"
+    MEMORY_GOVERNANCE = "memory_governance"
 
 
 @dataclass

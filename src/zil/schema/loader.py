@@ -100,6 +100,7 @@ def validate_project(project_dir: Path) -> ValidationResult:
     _check_skills(project_dir, manifest, result)
     _check_agents(project_dir, manifest, result)
     _check_service(manifest, result)
+    _check_memory(project_dir, manifest, result)
 
     return result
 
@@ -890,3 +891,208 @@ def _check_service(manifest: dict, result: ValidationResult) -> None:
                 f"on_timeout={hitl.get('timeout_action', 'abort')})",
             )
         )
+
+
+def _check_memory(project_dir: Path, manifest: dict, result: ValidationResult) -> None:
+    """Validate spec.memory / adapters/memory.yaml (RFC-003).
+
+    Rules:
+    - provider must be registered;
+    - every requested scope must be supported by the provider;
+    - substrate must be present iff the provider is BYO-store
+      (managed providers like Mem0 must NOT declare a substrate);
+    - retention values must be well-formed;
+    - long-term/shared scopes with exclude_pii=false get a PII warning;
+    - provider auth env vars should be declared in spec.env.
+    """
+    import re
+
+    from zil.sdk.memory.config import MemoryConfig
+    from zil.sdk.memory.registry import UnknownProviderError, registry
+    from zil.sdk.memory.types import MemoryScope
+
+    spec = manifest.get("spec", {})
+    mem_ref = spec.get("memory")
+    if not mem_ref:
+        # Memory is optional — nothing to validate.
+        return
+
+    # Resolve the adapter file (path or directory containing memory.yaml).
+    candidate = project_dir / mem_ref
+    if candidate.is_dir():
+        candidate = candidate / "memory.yaml"
+    if not candidate.is_file():
+        result.checks.append(
+            CheckResult("fail", f"spec.memory — adapter config not found at {mem_ref}")
+        )
+        return
+
+    try:
+        data = yaml.safe_load(candidate.read_text()) or {}
+    except yaml.YAMLError as e:
+        result.checks.append(
+            CheckResult("fail", f"{mem_ref} — invalid YAML: {e}")
+        )
+        return
+
+    try:
+        config = MemoryConfig.from_dict(data)
+    except ValueError as e:
+        result.checks.append(CheckResult("fail", f"{mem_ref} — {e}"))
+        return
+
+    # Provider must be registered.
+    if config.provider not in registry:
+        result.checks.append(
+            CheckResult(
+                "fail",
+                f"{mem_ref} — unknown provider {config.provider!r}. "
+                f"Registered: {registry.list_names()}",
+            )
+        )
+        return
+
+    try:
+        provider = registry.create(config)
+    except UnknownProviderError as e:
+        result.checks.append(CheckResult("fail", f"{mem_ref} — {e}"))
+        return
+
+    # Every requested scope must be supported by the provider.
+    requested = config.scopes or list(MemoryScope)
+    unsupported = [s.value for s in requested if not provider.supports(s)]
+    if unsupported:
+        result.checks.append(
+            CheckResult(
+                "fail",
+                f"{mem_ref} — provider {config.provider!r} does not support "
+                f"scope(s): {unsupported}",
+            )
+        )
+    else:
+        result.checks.append(
+            CheckResult(
+                "pass",
+                f"{mem_ref} — provider={config.provider}, mode={config.mode}, "
+                f"scopes={[s.value for s in requested]}"
+                + (f", namespace={config.namespace}" if config.namespace else ""),
+            )
+        )
+
+    # Substrate present iff BYO-store provider.
+    requires_substrate = getattr(provider, "REQUIRES_SUBSTRATE", False)
+    has_substrate = config.substrate is not None
+    if requires_substrate and not has_substrate:
+        result.checks.append(
+            CheckResult(
+                "fail",
+                f"{mem_ref} — provider {config.provider!r} is bring-your-own-store "
+                "and requires a 'substrate' block",
+            )
+        )
+    elif not requires_substrate and has_substrate:
+        result.checks.append(
+            CheckResult(
+                "fail",
+                f"{mem_ref} — provider {config.provider!r} manages its own storage; "
+                "remove the 'substrate' block",
+            )
+        )
+
+    # Retention values must be well-formed (ints, 'ephemeral', or e.g. '90d').
+    valid_scope_keys = {s.value for s in MemoryScope}
+    retention_re = re.compile(r"^\d+[smhdwy]$")
+    for key, value in (config.retention or {}).items():
+        if key not in valid_scope_keys:
+            result.checks.append(
+                CheckResult(
+                    "warn",
+                    f"{mem_ref} — retention key {key!r} is not a known scope "
+                    f"({sorted(valid_scope_keys)})",
+                )
+            )
+            continue
+        if isinstance(value, int):
+            continue
+        if isinstance(value, str) and (
+            value == "ephemeral" or retention_re.match(value)
+        ):
+            continue
+        result.checks.append(
+            CheckResult(
+                "warn",
+                f"{mem_ref} — retention[{key}]={value!r} is not a recognized "
+                "duration ('ephemeral', integer seconds, or e.g. '90d')",
+            )
+        )
+
+    # PII governance: long-term/shared scopes without exclude_pii.
+    long_term = {MemoryScope.USER, MemoryScope.AGENT}
+    if any(s in long_term for s in requested) and not config.exclude_pii:
+        result.checks.append(
+            CheckResult(
+                "warn",
+                f"{mem_ref} — persist.exclude_pii is false while user/agent "
+                "(long-term/shared) memory is enabled; consider excluding PII",
+            )
+        )
+
+    # Long-term scopes should declare retention.
+    for scope in requested:
+        if scope in long_term and scope.value not in (config.retention or {}):
+            result.checks.append(
+                CheckResult(
+                    "warn",
+                    f"{mem_ref} — no retention declared for long-term scope "
+                    f"{scope.value!r} (data may persist indefinitely)",
+                )
+            )
+
+    # Provider auth env vars should be declared in spec.env.
+    env_declarations = spec.get("env", [])
+    declared_env_names = {e.get("name") for e in env_declarations if e.get("name")}
+    if config.provider == "mem0" and config.is_managed:
+        if "MEM0_API_KEY" not in declared_env_names:
+            result.checks.append(
+                CheckResult(
+                    "warn",
+                    f"{mem_ref} — managed Mem0 requires MEM0_API_KEY but it is "
+                    "not declared in spec.env",
+                )
+            )
+
+    # Validate the authored memory seed file (RFC-003 seeding), if declared.
+    if config.seed and config.seed.get("file"):
+        from zil.sdk.memory.seed import SeedError, load_seed_file
+
+        seed_file = (candidate.parent / config.seed["file"]).resolve()
+        if not seed_file.is_file():
+            result.checks.append(
+                CheckResult(
+                    "fail",
+                    f"{mem_ref} — seed.file not found at {config.seed['file']}",
+                )
+            )
+        else:
+            try:
+                seed = load_seed_file(seed_file)
+                if not config.namespace and not seed.namespace:
+                    result.checks.append(
+                        CheckResult(
+                            "warn",
+                            f"{mem_ref} — seed declared but no namespace set "
+                            "(AGENT-scope seed needs a namespace to install)",
+                        )
+                    )
+                else:
+                    result.checks.append(
+                        CheckResult(
+                            "pass",
+                            f"{mem_ref} — memory seed OK ({len(seed)} entr"
+                            f"{'y' if len(seed) == 1 else 'ies'}, AGENT scope)",
+                        )
+                    )
+            except SeedError as e:
+                result.checks.append(
+                    CheckResult("fail", f"{mem_ref} — invalid seed file: {e}")
+                )

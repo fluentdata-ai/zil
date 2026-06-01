@@ -33,6 +33,7 @@ class ArchiveMetadata:
     env_coverage: dict[str, Any] | None = None
     cost_config: dict[str, Any] | None = None
     tools_config: dict[str, Any] | None = None
+    memory_binding: dict[str, Any] | None = None
 
 
 # Directories and files to include in the archive (relative to project root)
@@ -74,16 +75,132 @@ def _is_excluded(rel_path: Path, excludes: set[str]) -> bool:
     return rel_path.parts[0] in excludes if rel_path.parts else False
 
 
+def _load_memory_config(project_dir: Path, manifest: dict[str, Any]):
+    """Load the parsed MemoryConfig for a project, or None if not configured."""
+    mem_ref = manifest.get("spec", {}).get("memory")
+    if not mem_ref:
+        return None, None
+    candidate = project_dir / mem_ref
+    if candidate.is_dir():
+        candidate = candidate / "memory.yaml"
+    if not candidate.is_file():
+        return None, None
+    try:
+        from zil.sdk.memory.config import MemoryConfig
+
+        cfg = MemoryConfig.from_dict(yaml.safe_load(candidate.read_text()) or {})
+    except (yaml.YAMLError, ValueError, ImportError):
+        return None, None
+    return cfg, candidate
+
+
+def gather_memory_seed(
+    project_dir: Path,
+    manifest: dict[str, Any],
+    *,
+    exported_entries: list[dict[str, Any]] | None = None,
+    pii_mode: str = "drop",
+):
+    """Assemble the packable AGENT-scope seed (authored + optional live export).
+
+    Returns ``(SeedSet | None, FilterResult | None)``. Entries are deduplicated
+    by content hash and PII-filtered (default: drop offending entries). Never
+    includes SESSION/USER scope. The authored ``seed.yaml`` is *never* bundled
+    raw — only the filtered, normalized result ships.
+    """
+    from zil.sdk.memory import pii
+    from zil.sdk.memory.config import MemoryConfig  # noqa: F401
+    from zil.sdk.memory.seed import (
+        SeedSet,
+        entry_hash,
+        load_seed_file,
+    )
+
+    cfg, adapter_path = _load_memory_config(project_dir, manifest)
+    if cfg is None:
+        if not exported_entries:
+            return None, None
+        namespace = None
+    else:
+        namespace = cfg.namespace
+
+    entries: list[dict[str, Any]] = []
+
+    # 1) authored seed file (resolved relative to the memory adapter)
+    if cfg is not None and cfg.seed and cfg.seed.get("file") and adapter_path:
+        seed_file = (adapter_path.parent / cfg.seed["file"]).resolve()
+        authored = load_seed_file(seed_file)
+        entries.extend(authored.entries)
+        if authored.namespace:
+            namespace = authored.namespace
+
+    # 2) live-exported entries (already normalized by the caller)
+    if exported_entries:
+        entries.extend(exported_entries)
+
+    if not entries:
+        return None, None
+
+    # Dedup by content hash, preserving first occurrence.
+    seen: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for entry in entries:
+        h = entry_hash(str(entry.get("content", "")), entry.get("metadata"))
+        if h in seen:
+            continue
+        seen.add(h)
+        deduped.append(entry)
+
+    # PII filter (drop offending entries by default).
+    result = pii.filter_entries(deduped, mode=pii_mode)  # type: ignore[arg-type]
+    seed = SeedSet(entries=result.kept, namespace=namespace)
+    return seed, result
+
+
+def _memory_binding(project_dir: Path, manifest: dict[str, Any]) -> dict[str, Any] | None:
+    """Return a sanitized memory binding summary for provenance.
+
+    Records *configuration only* — provider, mode, scopes, namespace,
+    retention, and PII policy. Never includes memory *data* or secrets
+    (auth is env-referenced and resolved at runtime, not packaged).
+    """
+    mem_ref = manifest.get("spec", {}).get("memory")
+    if not mem_ref:
+        return None
+    candidate = project_dir / mem_ref
+    if candidate.is_dir():
+        candidate = candidate / "memory.yaml"
+    if not candidate.is_file():
+        return None
+    try:
+        cfg = yaml.safe_load(candidate.read_text()) or {}
+    except yaml.YAMLError:
+        return None
+    persist = cfg.get("persist") or {}
+    return {
+        "provider": cfg.get("provider"),
+        "mode": cfg.get("mode", "managed"),
+        "namespace": cfg.get("namespace"),
+        "scopes": cfg.get("scopes") or [],
+        "retention": cfg.get("retention") or {},
+        "exclude_pii": bool(persist.get("exclude_pii", False)),
+        "has_substrate": cfg.get("substrate") is not None,
+    }
+
+
 def build_archive(
     project_dir: Path,
     output_dir: Path,
     sbom: dict[str, Any] | None = None,
     eval_results: dict[str, Any] | None = None,
     env_coverage: dict[str, Any] | None = None,
+    memory_seed: Any | None = None,
 ) -> Path:
     """Build a .zil archive from a project directory.
 
-    Returns the path to the created archive.
+    If ``memory_seed`` (a ``SeedSet``) is not provided, the authored seed (if
+    any) is gathered and PII-filtered automatically so direct callers still
+    ship pre-seeded knowledge. Returns the path to the created archive.
     """
     manifest_path = project_dir / "manifest.yaml"
     if not manifest_path.exists():
@@ -164,6 +281,28 @@ def build_archive(
         }
         if env_coverage:
             build_meta["env_coverage"] = env_coverage
+        # Memory binding (config only — no data, no secrets) for provenance.
+        memory_binding = _memory_binding(project_dir, manifest)
+
+        # Packable memory seed (AGENT-scope knowledge; PII-filtered).
+        if memory_seed is None:
+            memory_seed, _ = gather_memory_seed(project_dir, manifest)
+        if memory_seed is not None and len(memory_seed) > 0:
+            from zil.sdk.memory.seed import SEED_ARCHIVE_PATH, dump_seed_jsonl
+
+            _add_bytes_to_tar(tar, SEED_ARCHIVE_PATH, dump_seed_jsonl(memory_seed))
+            seed_summary = {
+                "digest": memory_seed.digest,
+                "count": len(memory_seed),
+                "scopes": ["agent"],
+                "namespace": memory_seed.namespace,
+                "pii_filtered": True,
+            }
+            memory_binding = dict(memory_binding or {})
+            memory_binding["seed"] = seed_summary
+
+        if memory_binding:
+            build_meta["memory"] = memory_binding
         meta_json = json.dumps(build_meta, indent=2).encode()
         _add_bytes_to_tar(tar, "BUILD_META.json", meta_json)
 
@@ -204,6 +343,7 @@ def read_archive(archive_path: Path) -> ArchiveMetadata:
         # Read build metadata
         created_at = ""
         env_coverage = None
+        memory_binding = None
         try:
             meta_member = tar.getmember("BUILD_META.json")
             meta_file = tar.extractfile(meta_member)
@@ -211,6 +351,7 @@ def read_archive(archive_path: Path) -> ArchiveMetadata:
                 build_meta = json.loads(meta_file.read())
                 created_at = build_meta.get("created_at", "")
                 env_coverage = build_meta.get("env_coverage")
+                memory_binding = build_meta.get("memory")
         except KeyError:
             pass
 
@@ -268,6 +409,7 @@ def read_archive(archive_path: Path) -> ArchiveMetadata:
         env_coverage=env_coverage,
         cost_config=cost_config,
         tools_config=tools_config,
+        memory_binding=memory_binding,
     )
 
 

@@ -57,6 +57,12 @@ class AgentSpec:
     guardrail_callback: Any | None = None
     cost_callback: Any | None = None
 
+    # Memory layer (RFC-003). ``memory_config`` is a
+    # ``zil.sdk.memory.MemoryConfig`` and ``memory_provider`` a built
+    # ``MemoryProvider``; both ``None`` when the manifest declares no memory.
+    memory_config: Any | None = None
+    memory_provider: Any | None = None
+
     # Escape hatch for backend-specific needs
     context: ProjectContext | None = None
 

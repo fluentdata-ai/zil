@@ -7,6 +7,7 @@ Dispatches to the appropriate framework backend based on
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,8 @@ def create_agent(
     enable_guardrails: bool = True,
     enable_cost_tracking: bool = True,
     enable_mcp: bool = True,
+    enable_memory: bool = True,
+    enable_memory_seed: bool = True,
     raw: bool = False,
 ) -> Any:
     """Create an agent wired from the Zil project manifest.
@@ -170,6 +173,37 @@ def create_agent(
     if enable_mcp and ctx.tools_config:
         mcp_server_configs = ctx.tools_config.get("mcp_servers", [])
 
+    # Build the memory provider from adapters/memory.yaml (if declared)
+    memory_provider = None
+    if enable_memory and ctx.memory_config is not None:
+        from zil.sdk.memory.loader import build_provider
+
+        memory_provider = build_provider(ctx.memory_config)
+        logger.info(
+            "Memory active — provider=%s, mode=%s, namespace=%s, scopes=%s",
+            ctx.memory_config.provider,
+            ctx.memory_config.mode,
+            ctx.memory_config.namespace,
+            [s.value for s in ctx.memory_config.scopes] or "all",
+        )
+
+        # Idempotently install bundled seed memories (RFC-003 seeding).
+        seed_enabled = enable_memory_seed and os.environ.get(
+            "ZIL_MEMORY_SEED", "1"
+        ) != "0"
+        if seed_enabled:
+            from zil.sdk.memory.seed import resolve_seed_path, seed_if_needed
+
+            seed_path = resolve_seed_path(ctx.project_dir, ctx.memory_config)
+            if seed_path is not None:
+                report = seed_if_needed(
+                    memory_provider, ctx.memory_config, seed_path
+                )
+                if report.seeded:
+                    logger.info("Memory seed installed — %d entries", report.seeded)
+                elif report.skipped:
+                    logger.info("Memory seed skipped — %s", report.reason)
+
     # Build the framework-neutral AgentSpec
     agent_spec = AgentSpec(
         name=resolved_name,
@@ -185,6 +219,8 @@ def create_agent(
         raw_manifest=ctx.manifest,
         guardrail_callback=guardrail_callback,
         cost_callback=cost_callback,
+        memory_config=ctx.memory_config,
+        memory_provider=memory_provider,
         context=ctx,
     )
 

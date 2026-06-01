@@ -71,6 +71,9 @@ class OpenHandsWiredAgent:
     """Wraps a fully-configured OpenHands ``Agent`` instance."""
 
     _agent: Any  # openhands.sdk.Agent (typed as Any to avoid import at module level)
+    # Long-term memory wiring (RFC-003); both None when memory not configured.
+    memory_provider: Any | None = None
+    memory_config: Any | None = None
 
     @property
     def framework(self) -> str:
@@ -174,7 +177,11 @@ class OpenHandsBackend:
             len(oh_skills) if skills_dir and Path(skills_dir).is_dir() else 0,
         )
 
-        return OpenHandsWiredAgent(_agent=agent)
+        return OpenHandsWiredAgent(
+            _agent=agent,
+            memory_provider=spec.memory_provider,
+            memory_config=spec.memory_config,
+        )
 
     # ---- run_local ---------------------------------------------------
 
@@ -485,6 +492,25 @@ class OpenHandsBackend:
         sid = session_id or uuid.uuid4().hex
         oh_agent = agent._agent if hasattr(agent, "_agent") else agent
 
+        # Long-term memory (RFC-003): recall before the turn, persist after.
+        mem_provider = getattr(agent, "memory_provider", None)
+        mem_config = getattr(agent, "memory_config", None)
+        mem_user_id = os.environ.get("AGENT_USER_ID")
+        original_message = message
+        agent_texts: list[str] = []
+        if mem_provider is not None:
+            from zil.sdk.frameworks.openhands.memory_wiring import (
+                inject_memories,
+                retrieve_memories,
+            )
+
+            recalled = retrieve_memories(
+                mem_provider, mem_config, query=message, user_id=mem_user_id
+            )
+            message = inject_memories(message, recalled)
+            if recalled:
+                logger.info("[memory] injected %d memory item(s)", len(recalled))
+
         # Create an isolated per-invocation workspace so the agent cannot
         # browse the host filesystem.  Falls back to explicit workspace if set.
         workspace_root = os.environ.get(
@@ -518,6 +544,7 @@ class OpenHandsBackend:
                 text = OpenHandsBackend._extract_message_text(event)
                 if text:
                     logger.info("[agent] %s", text[:200])
+                    agent_texts.append(text)
                     q.put_nowait(SessionEvent(type="text", text=text))
 
             elif isinstance(event, ActionEvent):
@@ -611,6 +638,18 @@ class OpenHandsBackend:
 
         # Ensure the task is done (handles exceptions)
         await task
+
+        # Persist the completed exchange into long-term memory (RFC-003).
+        if mem_provider is not None:
+            from zil.sdk.frameworks.openhands.memory_wiring import persist_turn
+
+            persist_turn(
+                mem_provider,
+                mem_config,
+                user_message=original_message,
+                agent_messages=agent_texts,
+                user_id=mem_user_id,
+            )
 
         # Extract token usage from conversation stats
         done_metadata: dict[str, Any] = {"session_id": sid, "workspace": ws}

@@ -52,6 +52,9 @@ openhands = [
 eval = [
     "deepeval>=2.0,<3",
 ]
+memory = [
+    "mem0ai>=0.1,<1",
+]
 serve = [
     "fastapi>=0.100.0",
     "uvicorn>=0.24.0",
