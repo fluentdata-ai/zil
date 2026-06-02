@@ -641,14 +641,16 @@ def _deploy_unified(
         if readme.is_file():
             shutil.copy2(readme, zil_dest / "README.md")
 
-    # Reconcile requirements.txt with the zil install strategy.
+    # Reconcile requirements.txt with the zil install strategy. The Dockerfile
+    # always COPYs requirements.txt, so it must exist either way.
     req_path = temp_path / "requirements.txt"
     if use_local_src:
         # zil is installed from local source (with extras) by the Dockerfile.
         # Drop any PyPI ``zil-ai`` line so it can't shadow the local build or
-        # miss the ``memory`` extra.
-        if req_path.exists():
-            req_path.write_text(strip_zil_requirement(req_path.read_text()))
+        # miss the ``memory`` extra. Always (re)write so the file exists even
+        # when the packed project ships no requirements.txt.
+        existing = req_path.read_text() if req_path.exists() else ""
+        req_path.write_text(strip_zil_requirement(existing))
     elif not req_path.exists():
         groups = ["serve"]
         if framework != "stub":

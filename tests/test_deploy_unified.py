@@ -96,6 +96,11 @@ class TestMemoryHelpers:
     def test_strip_zil_requirement_empty_when_only_zil(self):
         assert strip_zil_requirement("zil-ai[serve]\n") == ""
 
+    def test_strip_zil_requirement_empty_input(self):
+        # Packed projects may ship no requirements.txt; stripping "" must yield
+        # an empty string so an (empty) file can still be written for COPY.
+        assert strip_zil_requirement("") == ""
+
 
 # ---------------------------------------------------------------------------
 # TestDeployModeRouting
