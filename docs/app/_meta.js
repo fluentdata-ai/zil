@@ -16,6 +16,7 @@ export default {
     title: "Configuration",
   },
   adapters: "Adapters",
+  memory: "Memory",
   identity: "Identity",
   evals: "Evaluation",
   observability: "Observability",

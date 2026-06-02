@@ -2,7 +2,7 @@
 # https://getzil.dev/docs
 # Source: https://github.com/fluentdata-co/zil
 # Package: pip install zil-ai
-# Version: 0.1.19
+# Version: 0.1.20
 
 ## Overview
 
@@ -596,6 +596,85 @@ Provider-to-model mapping:
     model: text-embedding-3-small
     auth:
       env_var: OPENAI_API_KEY
+
+---
+
+## Memory (long-term)
+
+Optional long-term memory that persists across sessions and can be shared
+across a fleet of agents. Framework-neutral. Install with:
+
+    pip install 'zil-ai[memory]'
+
+Enable via the manifest and a memory adapter file:
+
+    # manifest.yaml
+    spec:
+      memory: ./adapters/memory.yaml
+
+    # adapters/memory.yaml
+    provider: mem0
+    mode: managed              # managed (Mem0 SaaS) or self-hosted
+    namespace: coding          # shared-knowledge namespace (Mem0 agent_id)
+    scopes: [session, user, agent]
+    retention:
+      user: 90d
+      agent: 180d
+    persist:
+      strategy: explicit       # only store facts the agent marks
+      marker: "MEMORY:"        # token the agent emits to commit a fact
+      exclude_pii: false       # scrub PII before writing when true
+    seed:
+      file: ../memory/seed.yaml
+
+### Scope model
+
+    SESSION   keyed by run/conversation id     working context, one chat
+    USER      keyed by end-user id             per-user preferences/history
+    AGENT     keyed by namespace               shared knowledge across agents
+
+AGENT scope is shared and NOT keyed by user — seeded/shared facts are visible
+to every user and session. Recall for AGENT scope queries by namespace only.
+
+### Providers
+
+mem0 (managed): Mem0 SaaS. Env vars:
+    MEM0_API_KEY        required
+    MEM0_ORG_ID         optional (organization)
+    MEM0_PROJECT_ID     optional (project)
+
+mem0 (self-hosted): point at a private Mem0 server.
+    host: in adapter, or MEM0_API_BASE (preferred) / MEM0_HOST env.
+    Precedence: adapter host > MEM0_API_BASE > MEM0_HOST. Key still via MEM0_API_KEY.
+
+### Seeding
+
+seed.file ships baseline knowledge (AGENT scope). Installed idempotently on
+startup (content-hash dedup) and PII-filtered at pack and runtime.
+
+### Persistence
+
+strategy: explicit  → only facts the agent marks with `marker` are stored
+                      (e.g. "MEMORY: ..."), deduplicated per session.
+exclude_pii: true   → drops emails/phones/SSNs/cards/IPs before writing.
+
+### Framework wiring
+
+OpenHands: recall injects relevant memories as a context preamble before each
+           turn; the exchange is persisted afterward (wired at the SDK boundary).
+ADK:       wired through session/memory hooks with per-session dedup of marked
+           facts.
+
+### MemoryProvider interface (zil.sdk.memory)
+
+    write(content, scope, keys, ...)         store a single fact
+    add_session(messages, scope, keys, ...)  store a conversation
+    retrieve(MemoryQuery)                     semantic search
+    delete(scope, keys, ids=...)              delete by id or bulk
+    list_all(scope, keys)                     list memories in a scope
+
+Scope→Mem0 key mapping: SESSION→run_id, USER→user_id, AGENT→agent_id (namespace).
+AGENT scope intentionally uses agent_id only.
 
 ---
 

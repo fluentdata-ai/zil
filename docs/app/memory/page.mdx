@@ -1,0 +1,163 @@
+# Memory
+
+Zil agents can have **long-term memory** — durable knowledge that persists across
+sessions and, optionally, is shared across a fleet of agents. Memory is a
+framework-neutral layer: the same configuration works regardless of which agent
+framework backs your runtime.
+
+## Scope model
+
+Memory is organized into three scopes:
+
+| Scope | Keyed by | Lifetime | Use for |
+|-------|----------|----------|---------|
+| `SESSION` | conversation/run id | One conversation | Working context within a single chat |
+| `USER` | end-user id | Per end-user | Personal preferences, history for one user |
+| `AGENT` | `namespace` | Shared, long-lived | **Shared knowledge** across all agents that use the same namespace (e.g. team coding conventions) |
+
+`AGENT` scope is the cross-agent shared pool: any agent that sets the same
+`namespace` and connects to the same memory backend sees the same knowledge. It
+is **not** keyed by user — shared facts are visible to every user and session.
+
+## Enabling memory
+
+Add a `spec.memory` field to your manifest pointing at a memory adapter file:
+
+```yaml
+# manifest.yaml
+spec:
+  memory: ./adapters/memory.yaml
+```
+
+Then create the adapter:
+
+```yaml
+# adapters/memory.yaml
+provider: mem0
+mode: managed
+namespace: coding
+scopes: [session, user, agent]
+
+retention:
+  user: 90d
+  agent: 180d
+
+persist:
+  strategy: explicit        # only store facts the agent explicitly marks
+  marker: "MEMORY:"         # token the agent emits to commit a durable fact
+  exclude_pii: false        # scrub PII before writing when true
+
+# Optional: ship baseline knowledge (AGENT scope), installed idempotently.
+seed:
+  file: ../memory/seed.yaml
+```
+
+Install the provider dependency:
+
+```bash
+uv pip install 'zil-ai[memory]'
+```
+
+## Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `provider` | string | Yes | Memory backend. Currently `mem0`. |
+| `mode` | string | No | `managed` (Mem0 SaaS) or self-hosted. Default: `managed`. |
+| `host` | string | No | Base URL of a self-hosted Mem0 server (or set `MEM0_API_BASE`). |
+| `namespace` | string | For `agent` scope | Shared-knowledge namespace (maps to Mem0 `agent_id`). |
+| `scopes` | list | No | Which scopes are enabled. Default: all. |
+| `retention.user` | duration | No | Retention for `USER`-scope memories (e.g. `90d`). |
+| `retention.agent` | duration | No | Retention for `AGENT`-scope memories (e.g. `180d`). |
+| `persist.strategy` | string | No | `explicit` (marker-gated) or default inference. |
+| `persist.marker` | string | No | Token the agent emits to commit a fact (e.g. `MEMORY:`). |
+| `persist.exclude_pii` | bool | No | Drop emails/phones/SSNs/cards/IPs before writing. |
+| `seed.file` | path | No | YAML file of baseline facts to seed on startup. |
+
+## Providers
+
+### Mem0 (managed)
+
+The default. Uses the [Mem0](https://mem0.ai) managed API. Configure via
+environment variables:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `MEM0_API_KEY` | Yes | Mem0 API key. |
+| `MEM0_ORG_ID` | No | Organization id (scopes the project). |
+| `MEM0_PROJECT_ID` | No | Project id. |
+
+### Mem0 (self-hosted)
+
+Point Zil at a privately deployed Mem0 server instead of the SaaS endpoint. The
+host can come from the adapter (`host:`) or the environment; the API key still
+comes from `MEM0_API_KEY`.
+
+```yaml
+# adapters/memory.yaml
+provider: mem0
+host: https://mem0.my-vpc.internal
+```
+
+| Variable | Description |
+|----------|-------------|
+| `MEM0_API_BASE` | Base URL of the self-hosted server (preferred). |
+| `MEM0_HOST` | Legacy alias for the host. |
+
+The adapter `host:` takes precedence over `MEM0_API_BASE`, which takes
+precedence over `MEM0_HOST`.
+
+## Seeding
+
+Ship an agent with baseline knowledge using a seed file. Seeds are written to
+`AGENT` scope, installed **idempotently** on startup (content-hash
+deduplication, so repeated deploys don't duplicate), and PII-filtered at both
+pack time and runtime.
+
+```yaml
+# memory/seed.yaml
+memories:
+  - topic: git
+    content: >
+      Commit with clear messages that reference the Jira ticket key, push to a
+      feature branch, and open a pull request against the configured base branch.
+  - topic: workflow
+    content: >
+      Never execute code changes without an approved plan; present the plan and
+      wait for explicit approval.
+```
+
+## Persistence strategies
+
+### Explicit marker
+
+With `strategy: explicit`, only facts the agent **explicitly marks** are stored.
+The agent emits the configured `marker` token to commit a durable fact:
+
+```
+MEMORY: The team deploys to production only on Tuesdays and Thursdays.
+```
+
+Marked facts are deduplicated per session so a repeated statement is written
+once. Keep marked facts concise and durable — transient or ticket-specific
+context should not be marked.
+
+## PII filtering
+
+Set `exclude_pii: true` to scrub emails, phone numbers, SSNs, card numbers, and
+IP addresses from content before it is written to the backend. Filtering is
+applied on the write path and during seed export.
+
+## Recall and persistence
+
+How memory is wired depends on the framework backend:
+
+- **OpenHands** — before each turn, relevant memories are retrieved and injected
+  as a context preamble; after the turn completes, the exchange is persisted.
+  This is wired at the SDK boundary because OpenHands has no pluggable memory
+  service.
+- **ADK** — memory is wired through the framework's session/memory hooks, with
+  per-session deduplication of explicitly-marked facts.
+
+In both cases, `AGENT`-scope recall queries by `namespace` only, so shared and
+seeded knowledge is visible across every user and session.

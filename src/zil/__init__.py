@@ -1,6 +1,6 @@
 """Zil — A framework for production AI agents."""
 
-__version__ = "0.1.19"
+__version__ = "0.1.20"
 
 from zil.sdk import config, cost, create_agent
 from zil.sdk.session import Session, SessionEvent, SessionResponse

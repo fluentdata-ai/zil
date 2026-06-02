@@ -5,6 +5,32 @@ All notable changes to the `zil-ai` package will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.20] — 2026-06-02
+
+### Added
+
+- **Long-term memory system (RFC-003)** — a framework-neutral memory layer with a three-tier scope model: `SESSION` (per-conversation), `USER` (per-end-user), and `AGENT` (shared namespace knowledge). Exposed through a provider-agnostic `MemoryProvider` interface (`write`, `add_session`, `retrieve`, `delete`, `list_all`).
+- **Mem0 provider** — `zil.sdk.memory.providers.mem0.Mem0Provider` backs memory with [Mem0](https://mem0.ai), supporting both the managed SaaS API and a self-hosted server (set `host:` in the adapter or `MEM0_API_BASE` / `MEM0_HOST`; API key via `MEM0_API_KEY`, optional `MEM0_ORG_ID` / `MEM0_PROJECT_ID`).
+- **`spec.memory` manifest field** — declare a memory adapter file configuring `provider`, `mode`, `namespace`, `scopes`, `retention`, `persist` strategy, and `seed`.
+- **Memory seeding** — ship an agent with baseline knowledge via a `seed.file`. Seeds are installed idempotently on startup (content-hash dedup) and PII-filtered at pack and runtime.
+- **Explicit-marker persist strategy** — `persist.strategy: explicit` stores only facts the agent marks with a configurable token (`marker: "MEMORY:"`). Includes per-session deduplication so repeated facts are written once.
+- **PII filtering** — optional `exclude_pii` scrubs emails, phone numbers, SSNs, card numbers, and IPs before writing.
+- **OpenHands long-term memory wiring** — recall injects relevant memories as a context preamble before each turn and persists the completed exchange afterward, wired at the SDK boundary (OpenHands has no pluggable memory service).
+- **`zil-ai[memory]` extra** — installs `mem0ai` for the Mem0 provider.
+- **svt-openhands example** — now ships a memory adapter (`coding` namespace) plus a Phase 0 spec-refinement workflow (critique-before-code).
+
+### Changed
+
+- **Dockerfile generation** — `zil serve --docker` and `zil deploy` now add the `memory` extra to the image when the manifest declares a memory adapter, and always emit a `requirements.txt` so the build's `COPY` step never fails (including for packed projects that ship none). Dev/editable installs bundle the local zil source and log the resolved source path.
+- **Explicit-marker persistence** — uses Mem0's default inference instead of forcing `infer=False`.
+- **Memory marker guidance** — persona/marker rules emphasize concise, durable facts and exclude transient ticket context from `MEMORY:` lines.
+
+### Fixed
+
+- **AGENT-scope recall** — the Mem0 provider no longer sends `user_id` (or `run_id`) alongside `agent_id` for `AGENT` scope. Managed Mem0 AND-filters identifiers, so the stray `user_id` was hiding all shared/seeded memories on recall (agent reported "no memories" despite seeded facts).
+- **Mem0 write payload** — `write()` now sends a message list instead of a bare string, which the managed API rejected.
+- **Dockerfile `COPY requirements.txt`** — generated images no longer fail to build when the project (or extracted `.zil`) ships no `requirements.txt`.
+
 ## [0.1.19] — 2026-05-26
 
 ### Added
@@ -347,6 +373,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - JSON Schema for Zil v1 manifest (`spec/v1/manifest.schema.json`).
 - 15 CLI tests.
 
+[0.1.20]: https://github.com/fluentdata-co/zil/compare/v0.1.19...v0.1.20
+[0.1.19]: https://github.com/fluentdata-co/zil/compare/v0.1.18...v0.1.19
 [0.1.18]: https://github.com/fluentdata-co/zil/compare/v0.1.17...v0.1.18
 [0.1.17]: https://github.com/fluentdata-co/zil/compare/v0.1.16...v0.1.17
 [0.1.16]: https://github.com/fluentdata-co/zil/compare/v0.1.15...v0.1.16
