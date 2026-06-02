@@ -136,7 +136,9 @@ def docker_serve(
     from zil.packaging.dockerfile import (
         generate_serve_dockerfile,
         read_host_deps,
+        read_memory_enabled,
         read_runtime_deps,
+        strip_zil_requirement,
     )
 
     manifest_path = project_dir / "manifest.yaml"
@@ -144,13 +146,17 @@ def docker_serve(
     framework = manifest.get("spec", {}).get("runtime", {}).get("framework", "adk")
     host_deps = read_host_deps(manifest)
     runtime_deps = read_runtime_deps(manifest)
+    memory_enabled = read_memory_enabled(manifest)
 
     # Detect editable install for local dev
     zil_repo_root = _is_editable_install()
     use_local_src = zil_repo_root is not None
 
     if use_local_src:
-        console.print("  [dim]Dev mode: packaging local zil source into container[/dim]")
+        console.print(
+            f"  [dim]Dev mode: bundling local zil source from "
+            f"[bold]{zil_repo_root}[/bold] into container[/dim]"
+        )
 
     # Generate Dockerfile
     dockerfile = generate_serve_dockerfile(
@@ -159,6 +165,7 @@ def docker_serve(
         framework=framework,
         port=port,
         local_zil_src=use_local_src,
+        memory_enabled=memory_enabled,
     )
 
     # Stage in temp dir
@@ -194,10 +201,21 @@ def docker_serve(
         if readme.is_file():
             shutil.copy2(readme, zil_dest / "README.md")
 
-    # Ensure requirements.txt exists
-    if not (temp_path / "requirements.txt").exists():
-        extras = f"zil-ai[serve,{framework}]" if framework != "stub" else "zil-ai[serve]"
-        (temp_path / "requirements.txt").write_text(f"{extras}\n")
+    # Reconcile requirements.txt with the zil install strategy.
+    req_path = temp_path / "requirements.txt"
+    if use_local_src:
+        # zil is installed from the local source (with the right extras) by the
+        # Dockerfile. Drop any PyPI ``zil-ai`` line so it can't shadow the local
+        # build or miss the ``memory`` extra.
+        if req_path.exists():
+            req_path.write_text(strip_zil_requirement(req_path.read_text()))
+    elif not req_path.exists():
+        groups = ["serve"]
+        if framework != "stub":
+            groups.append(framework)
+        if memory_enabled:
+            groups.append("memory")
+        req_path.write_text(f"zil-ai[{','.join(groups)}]\n")
 
     # Build image
     image_tag = f"zil-{agent_name}:latest"

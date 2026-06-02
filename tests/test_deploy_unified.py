@@ -1,14 +1,15 @@
 """Tests for unified deploy path (zil serve entrypoint)."""
 
 import os
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 import yaml
 
-from zil.packaging.dockerfile import generate_serve_dockerfile
-
+from zil.packaging.dockerfile import (
+    generate_serve_dockerfile,
+    read_memory_enabled,
+    strip_zil_requirement,
+)
 
 # ---------------------------------------------------------------------------
 # TestServeDockerfile
@@ -56,6 +57,45 @@ class TestServeDockerfile:
         assert "appuser" in df
         assert "USER appuser" in df
 
+    def test_memory_extra_added_when_enabled(self):
+        df = generate_serve_dockerfile(framework="openhands", memory_enabled=True)
+        assert "zil-ai[serve,openhands,memory]" in df
+
+    def test_memory_extra_absent_when_disabled(self):
+        df = generate_serve_dockerfile(framework="openhands", memory_enabled=False)
+        assert "memory" not in df.split("zil-ai")[1].split("\n")[0]
+
+    def test_local_src_install_includes_memory(self):
+        df = generate_serve_dockerfile(
+            framework="openhands", local_zil_src=True, memory_enabled=True
+        )
+        # Dev mode installs from the copied local source, not PyPI.
+        assert "COPY _zil_src/" in df
+        assert "/app/_zil_src[serve,openhands,memory]" in df
+        assert "uv pip install --system --no-cache zil-ai" not in df
+
+
+class TestMemoryHelpers:
+    def test_read_memory_enabled_spec_memory(self):
+        manifest = {"spec": {"memory": "./adapters/memory.yaml", "runtime": {}}}
+        assert read_memory_enabled(manifest) is True
+
+    def test_read_memory_enabled_runtime_fallback(self):
+        manifest = {"spec": {"runtime": {"memory": "./adapters/memory.yaml"}}}
+        assert read_memory_enabled(manifest) is True
+
+    def test_read_memory_enabled_false(self):
+        assert read_memory_enabled({"spec": {"runtime": {}}}) is False
+
+    def test_strip_zil_requirement_removes_zil_line(self):
+        text = "zil-ai[serve,openhands]\nrequests>=2\n"
+        out = strip_zil_requirement(text)
+        assert "zil-ai" not in out
+        assert "requests>=2" in out
+
+    def test_strip_zil_requirement_empty_when_only_zil(self):
+        assert strip_zil_requirement("zil-ai[serve]\n") == ""
+
 
 # ---------------------------------------------------------------------------
 # TestDeployModeRouting
@@ -67,6 +107,7 @@ class TestDeployModeRouting:
 
     def test_deploy_help_shows_mode(self):
         from click.testing import CliRunner
+
         from zil.cli import cli
 
         runner = CliRunner()
@@ -79,6 +120,7 @@ class TestDeployModeRouting:
     def test_deploy_auto_non_adk_uses_unified(self, tmp_path):
         """Non-ADK framework in auto mode should use unified deploy."""
         from click.testing import CliRunner
+
         from zil.cli import cli
 
         # Create a stub project
@@ -117,6 +159,7 @@ class TestDeployModeRouting:
     def test_deploy_mode_serve_forces_unified(self, tmp_path):
         """--mode serve should use unified path even for ADK."""
         from click.testing import CliRunner
+
         from zil.cli import cli
 
         manifest = {

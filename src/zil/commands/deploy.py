@@ -561,7 +561,9 @@ def _deploy_unified(
     from zil.packaging.dockerfile import (
         generate_serve_dockerfile,
         read_host_deps,
+        read_memory_enabled,
         read_runtime_deps,
+        strip_zil_requirement,
     )
 
     service_name = service or agent_name
@@ -571,6 +573,7 @@ def _deploy_unified(
     framework = manifest.get("spec", {}).get("runtime", {}).get("framework", "adk")
     host_deps = read_host_deps(manifest)
     runtime_deps = read_runtime_deps(manifest)
+    memory_enabled = read_memory_enabled(manifest)
 
     # Resolve Cloud SQL instance
     cloud_sql_instance: str | None = None
@@ -590,7 +593,10 @@ def _deploy_unified(
     use_local_src = zil_repo_root is not None
 
     if use_local_src:
-        console.print("  [dim]Dev mode: bundling local zil source for deploy[/dim]")
+        console.print(
+            f"  [dim]Dev mode: bundling local zil source from "
+            f"[bold]{zil_repo_root}[/bold] for deploy[/dim]"
+        )
 
     # Generate Dockerfile
     dockerfile = generate_serve_dockerfile(
@@ -598,6 +604,7 @@ def _deploy_unified(
         runtime_deps=runtime_deps,
         framework=framework,
         local_zil_src=use_local_src,
+        memory_enabled=memory_enabled,
     )
 
     # Stage project in a temp dir
@@ -634,9 +641,21 @@ def _deploy_unified(
         if readme.is_file():
             shutil.copy2(readme, zil_dest / "README.md")
 
-    # Ensure requirements.txt exists
-    if not (temp_path / "requirements.txt").exists():
-        (temp_path / "requirements.txt").write_text("zil-ai[serve]\n")
+    # Reconcile requirements.txt with the zil install strategy.
+    req_path = temp_path / "requirements.txt"
+    if use_local_src:
+        # zil is installed from local source (with extras) by the Dockerfile.
+        # Drop any PyPI ``zil-ai`` line so it can't shadow the local build or
+        # miss the ``memory`` extra.
+        if req_path.exists():
+            req_path.write_text(strip_zil_requirement(req_path.read_text()))
+    elif not req_path.exists():
+        groups = ["serve"]
+        if framework != "stub":
+            groups.append(framework)
+        if memory_enabled:
+            groups.append("memory")
+        req_path.write_text(f"zil-ai[{','.join(groups)}]\n")
 
     console.print(
         f"→ Deploying [bold]{service_name}[/bold] to Cloud Run "

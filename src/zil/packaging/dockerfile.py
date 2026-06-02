@@ -233,6 +233,7 @@ def generate_serve_dockerfile(
     framework: str = "adk",
     port: int = 8000,
     local_zil_src: bool = False,
+    memory_enabled: bool = False,
 ) -> str:
     """Generate a Dockerfile for unified deploy using ``zil serve`` as entrypoint.
 
@@ -248,12 +249,20 @@ def generate_serve_dockerfile(
         local_zil_src: If True, install zil from a local ``_zil_src/``
             directory copied into the build context (for development).
             If False, install from PyPI (production default).
+        memory_enabled: If True, add the ``memory`` extra so the long-term
+            memory provider deps (e.g. ``mem0ai``) are installed.
     """
     apt_block = _apt_install_block(host_deps or [])
     rt_block = _runtime_deps_block(runtime_deps or [])
 
-    # Determine zil install block
-    extras_suffix = f"[serve,{framework}]" if framework != "stub" else "[serve]"
+    # Determine zil extras. ``memory`` is added when the manifest enables a
+    # long-term memory adapter so ``mem0ai`` lands in the image.
+    extras = ["serve"]
+    if framework != "stub":
+        extras.append(framework)
+    if memory_enabled:
+        extras.append("memory")
+    extras_suffix = "[" + ",".join(extras) + "]"
     if local_zil_src:
         zil_install = (
             f"# Install zil from local source (dev mode)\n"
@@ -311,6 +320,34 @@ def read_runtime_deps(manifest_or_path: dict | Path) -> list[dict]:
     if isinstance(manifest_or_path, Path):
         manifest_or_path = yaml.safe_load(manifest_or_path.read_text())
     return manifest_or_path.get("spec", {}).get("runtime", {}).get("dependencies", [])
+
+
+def read_memory_enabled(manifest_or_path: dict | Path) -> bool:
+    """Return True if the manifest declares a long-term memory adapter.
+
+    A truthy ``spec.memory`` (path to an adapter file) means the image needs
+    the ``memory`` extra so ``mem0ai`` is installed. ``spec.runtime.memory`` is
+    accepted as a fallback for older manifests.
+    """
+    if isinstance(manifest_or_path, Path):
+        manifest_or_path = yaml.safe_load(manifest_or_path.read_text())
+    spec = manifest_or_path.get("spec", {})
+    return bool(spec.get("memory") or spec.get("runtime", {}).get("memory"))
+
+
+def strip_zil_requirement(requirements_text: str) -> str:
+    """Drop any ``zil-ai`` requirement line.
+
+    Used in dev mode: zil is installed from the local source copied into the
+    build context, so a PyPI ``zil-ai`` line in ``requirements.txt`` would both
+    pull a stale build and miss locally-available extras (e.g. ``memory``).
+    """
+    kept = [
+        line
+        for line in requirements_text.splitlines()
+        if not line.strip().lower().startswith(("zil-ai", "zil_ai", "zil["))
+    ]
+    return "\n".join(kept).strip() + ("\n" if kept else "")
 
 
 def has_tools_dir(project_dir: Path) -> bool:
