@@ -135,8 +135,15 @@ class Mem0Provider:
             raise MissingKeyError(scope, _KEY_NAME[scope])
 
         kwargs: dict[str, str] = {}
-        # Always pass any keys that are present so callers can combine e.g.
-        # namespace + user_id for per-user-within-group memory.
+        if scope is MemoryScope.AGENT:
+            # AGENT scope is shared namespace knowledge — keyed *solely* by
+            # agent_id so it is visible across all users and sessions. Mixing in
+            # a user_id here would AND-filter out the shared/seeded rows (which
+            # are written without a user_id), hiding them on recall.
+            kwargs["agent_id"] = namespace
+            return kwargs
+        # USER / SESSION scope: pass any present keys so callers can combine
+        # e.g. namespace + user_id for per-user-within-group memory.
         if keys.user_id:
             kwargs["user_id"] = keys.user_id
         if keys.session_id:

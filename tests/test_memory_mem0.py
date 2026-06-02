@@ -122,6 +122,33 @@ class TestScopeMapping:
         assert kwargs["user_id"] == "u1"
         assert kwargs["agent_id"] == "coding"
 
+    def test_agent_scope_ignores_user_id(self):
+        # AGENT scope is shared knowledge: a stray user_id must NOT be sent,
+        # otherwise Mem0 AND-filters out the user-less seeded/shared rows.
+        c = FakeMem0Client()
+        p = _provider(c)
+        p.write(
+            "fact",
+            scope=MemoryScope.AGENT,
+            keys=MemoryKeys(namespace="coding", user_id="u1"),
+        )
+        _, kwargs = c.add_calls[0]
+        assert kwargs == {"agent_id": "coding"}
+
+    def test_agent_scope_retrieve_ignores_user_id(self):
+        c = FakeMem0Client()
+        p = _provider(c)
+        p.retrieve(
+            MemoryQuery(
+                "what are your memories?",
+                scope=MemoryScope.AGENT,
+                keys=MemoryKeys(namespace="coding", user_id="u1"),
+            )
+        )
+        _, kwargs = c.search_calls[0]
+        assert "user_id" not in kwargs
+        assert kwargs["agent_id"] == "coding"
+
 
 class TestOperations:
     def test_write_returns_ids(self):
