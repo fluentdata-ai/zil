@@ -269,6 +269,48 @@ class TestA2AAgentCard:
         card = resp.json()
         assert card["url"] == "https://myagent.run.app"
 
+    def test_agent_card_no_skills_is_empty(self, client):
+        """A project without spec.skills advertises an empty skills list."""
+        resp = client.get("/.well-known/agent.json")
+        assert resp.json()["skills"] == []
+
+    def test_agent_card_advertises_real_skills(self, tmp_path):
+        """Skills from spec.skills are advertised on the Agent Card so A2A
+        clients can introspect and select capabilities (RFC-005 §8)."""
+        manifest = {
+            "version": "1",
+            "metadata": {"name": "skilled", "version": "1.0.0", "description": ""},
+            "spec": {
+                "runtime": {"framework": "stub"},
+                "identity": "./identity",
+                "skills": "./skills",
+            },
+        }
+        (tmp_path / "manifest.yaml").write_text(yaml.dump(manifest))
+        (tmp_path / "identity").mkdir()
+        (tmp_path / "identity" / "persona.md").write_text("persona")
+        (tmp_path / "adapters").mkdir()
+        (tmp_path / "adapters" / "llm.yaml").write_text(
+            "provider: gemini\nmodel: gemini-3.5-flash\n"
+        )
+        skills_dir = tmp_path / "skills"
+        (skills_dir / "refund").mkdir(parents=True)
+        (skills_dir / "refund" / "SKILL.md").write_text(
+            "---\nname: refund\ndescription: Issue a customer refund.\n---\n# refund\n"
+        )
+        (skills_dir / "lookup").mkdir(parents=True)
+        (skills_dir / "lookup" / "SKILL.md").write_text(
+            "---\nname: invoice_lookup\ndescription: Look up an invoice.\n---\n# lookup\n"
+        )
+
+        client = TestClient(_create_app(tmp_path))
+        card = client.get("/.well-known/agent.json").json()
+        skills = {s["id"]: s for s in card["skills"]}
+        assert set(skills) == {"refund", "lookup"}
+        assert skills["refund"]["name"] == "refund"
+        assert skills["refund"]["description"] == "Issue a customer refund."
+        assert skills["lookup"]["name"] == "invoice_lookup"
+
 
 # ---------------------------------------------------------------------------
 # TestA2ATasks

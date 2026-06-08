@@ -362,7 +362,9 @@ def _create_app(
 
     # ---- A2A endpoints ---------------------------------------------------
     if enable_a2a:
-        _register_a2a_endpoints(app, manifest, agent_name, agent_version, agent_description)
+        _register_a2a_endpoints(
+            app, project_dir, manifest, agent_name, agent_version, agent_description
+        )
 
     return app
 
@@ -428,8 +430,54 @@ def _register_webhook(
         return {"status": "accepted", "webhook": _name}
 
 
+def _load_skill_cards(project_dir: Path, manifest: dict) -> list[dict]:
+    """Build A2A AgentSkill entries from the ``spec.skills`` directory.
+
+    Each skill is a subdirectory containing a ``SKILL.md`` with YAML
+    frontmatter (``name``, ``description``). Advertising the real skills on
+    the Agent Card lets any A2A client introspect and select capabilities.
+    Returns ``[]`` when ``spec.skills`` is absent, missing, or empty.
+    """
+    skills_ref = manifest.get("spec", {}).get("skills")
+    if not skills_ref:
+        return []
+    skills_path = (project_dir / skills_ref).resolve()
+    if not skills_path.is_dir():
+        return []
+
+    cards: list[dict] = []
+    for entry in sorted(skills_path.iterdir()):
+        if not entry.is_dir():
+            continue
+        skill_md = entry / "SKILL.md"
+        if not skill_md.is_file():
+            skill_md = entry / "skill.md"
+            if not skill_md.is_file():
+                continue
+        name = entry.name
+        description = ""
+        try:
+            text = skill_md.read_text(encoding="utf-8")
+            if text.startswith("---"):
+                fm_block = text.partition("---")[2].partition("---")[0]
+                meta = yaml.safe_load(fm_block) or {}
+                name = meta.get("name", name)
+                description = (meta.get("description") or "").strip()
+        except Exception:
+            logger.warning(
+                "Could not parse skill frontmatter: %s", skill_md, exc_info=True
+            )
+        cards.append({
+            "id": entry.name,
+            "name": name,
+            "description": description,
+        })
+    return cards
+
+
 def _register_a2a_endpoints(
     app,
+    project_dir: Path,
     manifest: dict,
     agent_name: str,
     agent_version: str,
@@ -456,14 +504,9 @@ def _register_a2a_endpoints(
         "skills": [],
     }
 
-    # Extract skills from manifest if declared
-    skills_path = manifest.get("spec", {}).get("skills")
-    if skills_path:
-        agent_card["skills"].append({
-            "id": "default",
-            "name": f"{agent_name} default skill",
-            "description": agent_description,
-        })
+    # Advertise real skills from spec.skills so A2A clients can introspect
+    # and select capabilities (RFC-005 §8). Falls back to [] when undeclared.
+    agent_card["skills"] = _load_skill_cards(project_dir, manifest)
 
     # In-memory task store
     tasks: dict = {}
