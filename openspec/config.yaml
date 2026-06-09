@@ -1,0 +1,78 @@
+schema: spec-driven
+
+context: |
+  Zil (`zil-ai`) is a CLI + SDK for composing, validating, packaging, and serving
+  production AI agents. Agents are defined declaratively by a `manifest.yaml`
+  (schema `zil/v1`), `adapters/*.yaml`, and `identity/` files, on top of
+  ADK / A2A / MCP / OpenTelemetry.
+
+  Tech stack:
+  - Python >= 3.11, packaged with hatchling. Distribution name `zil-ai`, import `zil`.
+  - CLI: click (entrypoint `zil = zil.cli:cli`); output via rich.
+  - Core libs: pydantic v2, jinja2, pyyaml, jsonschema, oras (OCI packaging).
+  - Tooling: uv for env/deps; pytest + pytest-cov (tests in `tests/`, pythonpath `src`);
+    ruff (line-length 100, lint rules E/F/I/N/W/UP); mypy --strict.
+
+  Package layout (`src/zil/`):
+  - cli.py — click group wiring the commands.
+  - commands/ — one module per CLI verb: init, validate, pack, inspect, eval,
+    deploy, push, serve, audit (plus _docker.py).
+  - schema/loader.py — manifest schema load + CheckResult; spec/v1/manifest.schema.json.
+  - packaging/ — archive, dockerfile, registry, sbom, signing (ORAS/OCI).
+  - sdk/ — neutral core: agent.py (create_agent), config.py, cost, session,
+    telemetry, guardrails, identity, mcp, hitl.
+  - sdk/frameworks/ — pluggable backend abstraction: base.py defines AgentSpec,
+    the WiredAgent/FrameworkBackend Protocols, BackendRegistry, UnknownFrameworkError;
+    backends in adk/, openhands/, stub/, each with backend.py + memory_wiring.py.
+  - sdk/memory/ — RFC-003 memory layer: providers/ (mem0, stub), curation, pii,
+    seed, substrate, types, registry.
+  - sdk/audit/ — security checks: injection_probe, indirect_injection,
+    guardrail_coverage, mcp_permissions, memory_governance, output_leakage,
+    identity_review, instruction_consistency, context_window.
+  - sdk/eval/ — deepeval adapter, generator/runner/writer.
+  - templates/ — `zil init` scaffolding.
+
+  Core architectural rule (from sdk/frameworks/base.py):
+  - Framework-specific logic must NEVER leak into create_agent() or the CLI.
+    It goes through the FrameworkBackend Protocol and the registry, exchanging
+    only the neutral types AgentSpec / WiredAgent / SessionEvent.
+    `spec.runtime.framework` selects the backend.
+
+  Conventions:
+  - The neutral core (sdk, sdk/memory core, frameworks/base) imports NO provider
+    or framework SDK — providers/backends lazy-import their dependencies.
+  - Optional deps are grouped in [project.optional-dependencies]: adk, openhands,
+    memory, eval, serve, dev. New heavy deps go in the matching group, not core.
+  - Tests mock external SDKs (google-adk, openhands-sdk, mem0ai) — don't require them.
+  - All code and documentation in English. Keep a Changelog format in CHANGELOG.md.
+
+  Context bank — read before proposing:
+  - backlog/ is the project-direction / roadmap source of truth (ideas, next steps,
+    design rationale). Check whether work is already specced or sequenced there and
+    reference the relevant RFC in the proposal:
+      - ZIL-GAP-ANALYSIS-05-25.md — current gaps and priorities.
+      - ZIL-RFC-001 — tool-contract enforcement.
+      - ZIL-RFC-002a / ZIL-RFC-002b — framework-backend abstraction + OpenHands backend.
+      - ZIL-RFC-003 — memory-layer integration.
+      - ZIL-RFC-005 (+ RFC-005-PHASE0-FINDINGS) — multi-agent topology + A2A.
+      - ZIL-RFC-011 — runtime conformance specification.
+  - README.md, CONTRIBUTING.md, and docs/ (e.g. docs/memory.md) for usage + patterns.
+
+rules:
+  proposal:
+    - Always include a "Non-goals" section
+    - Name the affected zil modules (src/zil/...) and CLI verbs
+    - Flag whether the change touches the neutral core or a specific backend (adk/openhands/stub)
+    - Reference the relevant backlog RFC if the work is already on the roadmap
+  specs:
+    - Use Given/When/Then scenarios for behavioral contracts
+    - Do NOT include implementation details (class names, import paths, library choices)
+    - Reference the relevant capability area (frameworks, memory, audit, packaging, eval, serve)
+  design:
+    - Respect the FrameworkBackend boundary — no framework-specific logic in create_agent() or CLI
+    - Note ADK vs OpenHands vs stub impact and any new optional-dependency group
+    - Call out manifest/adapter schema changes (spec/v1/manifest.schema.json)
+  tasks:
+    - Break tasks into chunks of max 2 hours
+    - Each task lists the exact files under src/zil/... plus matching tests/test_*.py
+    - Include verification steps — ruff check, mypy, pytest (plus zil validate / zil audit when manifest or security behavior changes)

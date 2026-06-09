@@ -70,6 +70,14 @@
           "type": "string",
           "description": "Path to the skills directory."
         },
+        "collaborators": {
+          "type": "array",
+          "description": "Declared peer agents this agent may call over A2A (ZIL-RFC-005).",
+          "items": {
+            "$ref": "#/$defs/collaboratorSpec"
+          },
+          "minItems": 1
+        },
         "memory": {
           "type": "string",
           "description": "Path to the memory configuration."
@@ -114,6 +122,46 @@
     }
   },
   "$defs": {
+    "collaboratorSpec": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Logical handle the caller uses to reference this peer."
+        },
+        "url": {
+          "type": "string",
+          "description": "Explicit peer address (static discovery). Exactly one of url or ref."
+        },
+        "ref": {
+          "type": "string",
+          "description": "Registry reference for discovery (RFC-007). Exactly one of url or ref."
+        },
+        "skills": {
+          "type": "array",
+          "description": "Allowlist of peer skill ids the caller may invoke. Omit to allow all advertised.",
+          "items": { "type": "string" }
+        },
+        "auth": {
+          "type": "string",
+          "enum": ["gcp-id-token", "bearer", "none"],
+          "default": "gcp-id-token",
+          "description": "Inter-agent authentication mode."
+        },
+        "context_transfer": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "What context may cross the boundary on a peer call.",
+          "properties": {
+            "send": { "type": "string", "enum": ["message_only", "session_summary", "none"], "default": "message_only" },
+            "receive": { "type": "string", "enum": ["artifacts", "artifacts_and_state"], "default": "artifacts" },
+            "redact": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
     "envVar": {
       "type": "object",
       "required": ["name"],

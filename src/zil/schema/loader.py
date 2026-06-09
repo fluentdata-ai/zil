@@ -99,6 +99,7 @@ def validate_project(project_dir: Path) -> ValidationResult:
     _check_runtime_deps(manifest, result)
     _check_skills(project_dir, manifest, result)
     _check_agents(project_dir, manifest, result)
+    _check_collaborators(manifest, result)
     _check_service(manifest, result)
     _check_memory(project_dir, manifest, result)
 
@@ -789,6 +790,67 @@ def _check_agents(project_dir: Path, manifest: dict, result: ValidationResult) -
         CheckResult(
             "pass",
             f"spec.agents — {len(agents)} sub-agent(s): {', '.join(agent_names)}",
+        )
+    )
+
+
+_VALID_COLLABORATOR_AUTH = {"gcp-id-token", "bearer", "none"}
+
+
+def _check_collaborators(manifest: dict, result: ValidationResult) -> None:
+    """Validate spec.collaborators A2A peer declarations (ZIL-RFC-005)."""
+    collaborators = manifest.get("spec", {}).get("collaborators")
+    if not collaborators:
+        return
+
+    names: list[str] = []
+    for peer in collaborators:
+        name = peer.get("name", "<unnamed>")
+        names.append(name)
+
+        has_url = bool(peer.get("url"))
+        has_ref = bool(peer.get("ref"))
+        if has_url == has_ref:
+            result.checks.append(
+                CheckResult(
+                    "fail",
+                    f"spec.collaborators[{name}] — must declare exactly one of "
+                    "'url' or 'ref'",
+                )
+            )
+
+        auth = peer.get("auth", "gcp-id-token")
+        if auth not in _VALID_COLLABORATOR_AUTH:
+            result.checks.append(
+                CheckResult(
+                    "fail",
+                    f"spec.collaborators[{name}].auth — unknown mode '{auth}' "
+                    f"(expected one of {sorted(_VALID_COLLABORATOR_AUTH)})",
+                )
+            )
+        elif auth == "none":
+            result.checks.append(
+                CheckResult(
+                    "warn",
+                    f"spec.collaborators[{name}].auth — 'none' disables "
+                    "inter-agent authentication",
+                )
+            )
+
+    duplicates = sorted({n for n in names if names.count(n) > 1})
+    if duplicates:
+        result.checks.append(
+            CheckResult(
+                "fail",
+                f"spec.collaborators — duplicate collaborator name(s): "
+                f"{', '.join(duplicates)}",
+            )
+        )
+
+    result.checks.append(
+        CheckResult(
+            "pass",
+            f"spec.collaborators — {len(collaborators)} peer(s): {', '.join(names)}",
         )
     )
 

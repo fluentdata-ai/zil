@@ -248,6 +248,70 @@ def _build_sub_agents(
     return agent_tools
 
 
+def _build_remote_agents(spec: AgentSpec) -> list[Any]:
+    """Wrap declared A2A collaborators as RemoteA2aAgent AgentTools (RFC-005 §7.2).
+
+    Resolves each ``spec.context.collaborators`` peer to its Agent Card URL via
+    the static resolver and exposes it to the LLM as an ``AgentTool`` over the
+    A2A wire. The per-peer ``skills`` allowlist is surfaced in the tool
+    description so the model delegates only matching requests. Peers whose URL
+    cannot be resolved (e.g. unset env var) are skipped with a warning.
+    """
+    ctx = spec.context
+    collaborators = getattr(ctx, "collaborators", None) if ctx else None
+    if not collaborators:
+        return []
+
+    from google.adk.agents.remote_a2a_agent import RemoteA2aAgent
+    from google.adk.tools.agent_tool import AgentTool
+
+    from zil.collaboration.discovery import StaticResolver
+
+    try:
+        from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
+    except ImportError:
+        AGENT_CARD_WELL_KNOWN_PATH = "/.well-known/agent-card.json"  # noqa: N806
+
+    resolver = StaticResolver()
+    agent_tools: list[Any] = []
+    for peer in collaborators:
+        try:
+            base_url = resolver.resolve_url(peer)
+        except ValueError as exc:
+            logger.warning("Collaborator %r skipped: %s", peer.name, exc)
+            continue
+
+        card_url = base_url.rstrip("/") + AGENT_CARD_WELL_KNOWN_PATH
+
+        allowed = peer.skills
+        if allowed:
+            description = (
+                f"Remote agent '{peer.name}'. Allowed skills: "
+                f"{', '.join(allowed)}. Delegate matching requests by sending "
+                "a natural-language message."
+            )
+        else:
+            description = (
+                f"Remote agent '{peer.name}'. Delegate matching requests by "
+                "sending a natural-language message."
+            )
+
+        remote = RemoteA2aAgent(
+            name=peer.name,
+            agent_card=card_url,
+            description=description,
+        )
+        agent_tools.append(AgentTool(agent=remote))
+        logger.info(
+            "Collaborator %r wired as RemoteA2aAgent (card=%s, skills=%s)",
+            peer.name,
+            card_url,
+            allowed or "all",
+        )
+
+    return agent_tools
+
+
 # ---------------------------------------------------------------------------
 # WiredAgent wrapper
 # ---------------------------------------------------------------------------
@@ -324,6 +388,15 @@ class AdkBackend:
             logger.info(
                 "Multi-agent wiring: %d sub-agent(s) attached",
                 len(agent_tools),
+            )
+
+        # Wire declared A2A collaborators as RemoteA2aAgent tools (RFC-005).
+        if spec.context and getattr(spec.context, "collaborators", None):
+            remote_tools = _build_remote_agents(spec)
+            all_tools = all_tools + remote_tools
+            logger.info(
+                "A2A collaboration: %d remote agent(s) attached",
+                len(remote_tools),
             )
 
         # Build generate_content_config with thinking if configured

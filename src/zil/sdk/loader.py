@@ -52,6 +52,7 @@ class ProjectContext:
         runtime_deps: list[dict[str, Any]] | None = None,
         thinking_budget: int | None = None,
         memory_config: Any | None = None,
+        collaborators: list[Any] | None = None,
     ) -> None:
         self.project_dir = project_dir
         self.manifest = manifest
@@ -68,6 +69,8 @@ class ProjectContext:
         self.thinking_budget: int | None = thinking_budget
         # Parsed adapters/memory.yaml (zil.sdk.memory.MemoryConfig) or None.
         self.memory_config = memory_config
+        # Declared A2A peers (list[zil.collaboration.contract.PeerRef]).
+        self.collaborators: list[Any] = collaborators or []
 
     @property
     def name(self) -> str:
@@ -132,6 +135,7 @@ def load_project(project_dir: Path | None = None) -> ProjectContext:
     service_config = _load_service(manifest)
     skills_dir = _load_skills_dir(root, manifest)
     memory_config = _load_memory(root, manifest)
+    collaborators = _load_collaborators(manifest)
 
     env_declarations = manifest.get("spec", {}).get("env", [])
     cost_config = manifest.get("spec", {}).get("cost")
@@ -153,6 +157,7 @@ def load_project(project_dir: Path | None = None) -> ProjectContext:
         runtime_deps=runtime_deps,
         thinking_budget=int(thinking_budget) if thinking_budget is not None else None,
         memory_config=memory_config,
+        collaborators=collaborators,
     )
 
 
@@ -300,6 +305,33 @@ def _load_memory(root: Path, manifest: dict[str, Any]) -> Any | None:
     from zil.sdk.memory.loader import load_memory_config
 
     return load_memory_config(root, manifest)
+
+
+def _load_collaborators(manifest: dict[str, Any]) -> list[Any]:
+    """Parse spec.collaborators into PeerRef objects (ZIL-RFC-005)."""
+    raw = manifest.get("spec", {}).get("collaborators")
+    if not raw:
+        return []
+    from zil.collaboration.contract import ContextTransferPolicy, PeerRef
+
+    peers: list[Any] = []
+    for entry in raw:
+        ct = entry.get("context_transfer") or {}
+        peers.append(
+            PeerRef(
+                name=entry["name"],
+                url=entry.get("url"),
+                ref=entry.get("ref"),
+                skills=entry.get("skills"),
+                auth=entry.get("auth", "gcp-id-token"),
+                context_transfer=ContextTransferPolicy(
+                    send=ct.get("send", "message_only"),
+                    receive=ct.get("receive", "artifacts"),
+                    redact=list(ct.get("redact", []) or []),
+                ),
+            )
+        )
+    return peers
 
 
 def _load_skills_dir(root: Path, manifest: dict[str, Any]) -> Path | None:

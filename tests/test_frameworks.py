@@ -358,3 +358,61 @@ class TestInitFrameworkFlag:
     def test_init_help_shows_framework(self):
         result = runner_cli.invoke(cli, ["init", "--help"])
         assert "--framework" in result.output
+
+
+# ---------------------------------------------------------------------------
+# A2A collaborators -> RemoteA2aAgent wiring (ZIL-RFC-005 Phase 1b)
+# ---------------------------------------------------------------------------
+
+
+class TestRemoteAgents:
+    """`_build_remote_agents` wraps spec.collaborators as RemoteA2aAgent tools."""
+
+    def _spec_with(self, collaborators):
+        from types import SimpleNamespace
+
+        # _build_remote_agents only reads ctx.collaborators.
+        ctx = SimpleNamespace(collaborators=collaborators)
+        return AgentSpec(
+            name="caller",
+            version="1.0.0",
+            description="",
+            instructions="",
+            model="gemini-3.5-flash",
+            context=ctx,
+        )
+
+    def test_no_collaborators_returns_empty(self):
+        from zil.sdk.frameworks.adk.backend import _build_remote_agents
+
+        assert _build_remote_agents(self._spec_with([])) == []
+
+    def test_wraps_peer_as_agent_tool(self):
+        pytest.importorskip("google.adk")
+        from zil.collaboration.contract import PeerRef
+        from zil.sdk.frameworks.adk.backend import _build_remote_agents
+
+        spec = self._spec_with([
+            PeerRef(name="billing", url="https://billing.run.app",
+                    skills=["refund"]),
+        ])
+        tools = _build_remote_agents(spec)
+        assert len(tools) == 1
+        remote = tools[0].agent
+        assert remote.name == "billing"
+        # URL resolution is lazy; the card source targets the current
+        # well-known path (no network call at construction time).
+        assert remote._agent_card_source.endswith("/.well-known/agent-card.json")
+        assert remote._agent_card_source.startswith("https://billing.run.app")
+        # The per-peer skill allowlist is surfaced to the model.
+        assert "refund" in remote.description
+
+    def test_unresolvable_env_url_is_skipped(self):
+        pytest.importorskip("google.adk")
+        from zil.collaboration.contract import PeerRef
+        from zil.sdk.frameworks.adk.backend import _build_remote_agents
+
+        spec = self._spec_with([
+            PeerRef(name="billing", url="${DEFINITELY_UNSET_ENV_VAR_XYZ}"),
+        ])
+        assert _build_remote_agents(spec) == []

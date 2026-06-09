@@ -15,7 +15,7 @@ import logging
 import os
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import click
 import yaml
@@ -135,7 +135,7 @@ def _create_app(
             "Install it with:  pip install 'zil-ai[serve]'"
         ) from None
 
-    from zil.sdk.session import Session, SessionEvent
+    from zil.sdk.session import Session
 
     # ---- Load manifest ----------------------------------------------------
     manifest_path = project_dir / "manifest.yaml"
@@ -160,15 +160,15 @@ def _create_app(
 
     # ---- Request models ---------------------------------------------------
     class CreateSessionBody(BaseModel):
-        workspace: Optional[str] = None
-        session_id: Optional[str] = None
+        workspace: str | None = None
+        session_id: str | None = None
 
     class SendMessageBody(BaseModel):
         message: str
 
     class InvokeBody(BaseModel):
         message: str
-        workspace: Optional[str] = None
+        workspace: str | None = None
 
     class A2AMessagePart(BaseModel):
         type: str = "text"
@@ -178,8 +178,8 @@ def _create_app(
         parts: list = []
 
     class A2ATaskRequest(BaseModel):
-        id: Optional[str] = None
-        message: Optional[A2AMessage] = None
+        id: str | None = None
+        message: A2AMessage | None = None
 
     # ---- Build FastAPI app ------------------------------------------------
     app = FastAPI(
@@ -278,7 +278,7 @@ def _create_app(
                     data = json.dumps(payload)
                     yield f"data: {data}\n\n"
             except asyncio.CancelledError:
-                yield f'data: {{"type": "done", "text": "Cancelled by user"}}\n\n'
+                yield 'data: {"type": "done", "text": "Cancelled by user"}\n\n'
             finally:
                 active_tasks.pop(session_id, None)
 
@@ -471,6 +471,7 @@ def _load_skill_cards(project_dir: Path, manifest: dict) -> list[dict]:
             "id": entry.name,
             "name": name,
             "description": description,
+            "tags": [],
         })
     return cards
 
@@ -489,11 +490,13 @@ def _register_a2a_endpoints(
 
     from zil.sdk.session import Session
 
-    # Build Agent Card from manifest
+    # Build Agent Card from manifest (A2A v0.3 conformant)
     agent_card = {
+        "protocolVersion": "0.3.0",
         "name": agent_name,
         "description": agent_description,
         "url": "",
+        "preferredTransport": "JSONRPC",
         "version": agent_version,
         "capabilities": {
             "streaming": True,
@@ -511,14 +514,29 @@ def _register_a2a_endpoints(
     # In-memory task store
     tasks: dict = {}
 
-    @app.get("/.well-known/agent.json")
-    async def agent_card_endpoint(request: Request):
-        """A2A Agent Card — describes this agent's capabilities."""
-        card = dict(agent_card)
+    def _build_card(request: Request) -> dict:
+        """Resolve the request-relative URLs on the Agent Card.
+
+        For the JSONRPC transport the card's ``url`` is the JSON-RPC endpoint
+        (``/a2a``); ``additionalInterfaces`` advertises it explicitly.
+        """
         scheme = request.headers.get("x-forwarded-proto", "http")
         host = request.headers.get("host", "localhost")
-        card["url"] = f"{scheme}://{host}"
-        return JSONResponse(content=card)
+        rpc_url = f"{scheme}://{host}/a2a"
+        card = dict(agent_card)
+        card["url"] = rpc_url
+        card["additionalInterfaces"] = [{"url": rpc_url, "transport": "JSONRPC"}]
+        return card
+
+    @app.get("/.well-known/agent-card.json")
+    async def agent_card_endpoint(request: Request):
+        """A2A Agent Card (current well-known path)."""
+        return JSONResponse(content=_build_card(request))
+
+    @app.get("/.well-known/agent.json")
+    async def agent_card_endpoint_legacy(request: Request):
+        """Deprecated alias for the Agent Card (pre-0.3 well-known path)."""
+        return JSONResponse(content=_build_card(request))
 
     @app.post("/tasks/send")
     async def a2a_send_task(request: Request):
@@ -581,10 +599,137 @@ def _register_a2a_endpoints(
 
     @app.get("/tasks/{task_id}")
     async def a2a_get_task(task_id: str):
-        """A2A: Get task status."""
+        """A2A (legacy/deprecated): Get task status."""
         if task_id not in tasks:
             raise HTTPException(status_code=404, detail="Task not found")
         return JSONResponse(content=tasks[task_id])
+
+    # ---- JSON-RPC transport (current A2A spec, preferredTransport) -------
+    def _text_from_message(message: dict) -> str:
+        """Extract text from a Message's parts (current ``kind`` or legacy ``type``)."""
+        parts = message.get("parts", []) if isinstance(message, dict) else []
+        texts = [
+            p.get("text", "")
+            for p in parts
+            if isinstance(p, dict) and p.get("kind", p.get("type")) == "text"
+        ]
+        return "\n".join(t for t in texts if t)
+
+    def _rpc_error(rpc_id, code: int, message: str):
+        return JSONResponse(
+            content={
+                "jsonrpc": "2.0",
+                "id": rpc_id,
+                "error": {"code": code, "message": message},
+            }
+        )
+
+    @app.post("/a2a")
+    async def a2a_jsonrpc(request: Request):
+        """A2A JSON-RPC 2.0 endpoint: message/send, message/stream, tasks/get."""
+        try:
+            body = await request.json()
+        except Exception:
+            return _rpc_error(None, -32700, "Parse error")
+        if (
+            not isinstance(body, dict)
+            or body.get("jsonrpc") != "2.0"
+            or "method" not in body
+        ):
+            rpc_id = body.get("id") if isinstance(body, dict) else None
+            return _rpc_error(rpc_id, -32600, "Invalid Request")
+
+        rpc_id = body.get("id")
+        method = body["method"]
+        params = body.get("params") or {}
+        message = params.get("message", {}) if isinstance(params, dict) else {}
+
+        wired = app.state.wired_agent
+        project = app.state.project_dir
+
+        if method == "message/send":
+            message_text = _text_from_message(message)
+            task_id = message.get("taskId") or uuid.uuid4().hex
+            context_id = message.get("contextId") or uuid.uuid4().hex
+            tasks[task_id] = {
+                "id": task_id,
+                "contextId": context_id,
+                "status": {"state": "working"},
+                "kind": "task",
+            }
+            session = Session(wired, workspace=str(project) if project else None)
+            try:
+                response = await session.send(message_text)
+            finally:
+                await session.close()
+            task = {
+                "id": task_id,
+                "contextId": context_id,
+                "status": {"state": "completed"},
+                "artifacts": [
+                    {
+                        "artifactId": uuid.uuid4().hex,
+                        "parts": [{"kind": "text", "text": response.text}],
+                    }
+                ],
+                "history": [],
+                "kind": "task",
+            }
+            tasks[task_id] = task
+            return JSONResponse(
+                content={"jsonrpc": "2.0", "id": rpc_id, "result": task}
+            )
+
+        if method == "message/stream":
+            message_text = _text_from_message(message)
+            task_id = message.get("taskId") or uuid.uuid4().hex
+            context_id = message.get("contextId") or uuid.uuid4().hex
+            session = Session(wired, workspace=str(project) if project else None)
+
+            def _evt(result: dict) -> str:
+                return (
+                    "data: "
+                    + json.dumps({"jsonrpc": "2.0", "id": rpc_id, "result": result})
+                    + "\n\n"
+                )
+
+            async def event_stream():
+                yield _evt({
+                    "taskId": task_id, "contextId": context_id,
+                    "kind": "status-update",
+                    "status": {"state": "working"}, "final": False,
+                })
+                try:
+                    async for event in session.stream(message_text):
+                        if event.type == "text" and event.text:
+                            yield _evt({
+                                "taskId": task_id, "contextId": context_id,
+                                "kind": "artifact-update",
+                                "artifact": {
+                                    "artifactId": "msg",
+                                    "parts": [{"kind": "text", "text": event.text}],
+                                },
+                                "append": True, "lastChunk": False,
+                            })
+                finally:
+                    await session.close()
+                yield _evt({
+                    "taskId": task_id, "contextId": context_id,
+                    "kind": "status-update",
+                    "status": {"state": "completed"}, "final": True,
+                })
+
+            return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+        if method == "tasks/get":
+            task_id = params.get("id")
+            if task_id not in tasks:
+                return _rpc_error(rpc_id, -32001, "Task not found")
+            return JSONResponse(
+                content={"jsonrpc": "2.0", "id": rpc_id, "result": tasks[task_id]}
+            )
+
+        return _rpc_error(rpc_id, -32601, "Method not found")
 
 
 # ---------------------------------------------------------------------------
@@ -703,7 +848,7 @@ def serve(
         )
         raise SystemExit(1) from None
 
-    console.print(f"[bold]zil serve[/bold] — starting agent server")
+    console.print("[bold]zil serve[/bold] — starting agent server")
     console.print(f"  Project: {project_path}")
     console.print(f"  Port: {port}")
     console.print(f"  A2A: {'enabled' if not no_a2a else 'disabled'}")
@@ -711,16 +856,16 @@ def serve(
 
     app = _create_app(project_path, enable_a2a=not no_a2a)
 
-    console.print(f"  Endpoints:")
-    console.print(f"    GET  /health")
-    console.print(f"    POST /invoke")
-    console.print(f"    POST /sessions")
-    console.print(f"    POST /sessions/{{id}}/messages")
-    console.print(f"    GET  /sessions/{{id}}/stream")
+    console.print("  Endpoints:")
+    console.print("    GET  /health")
+    console.print("    POST /invoke")
+    console.print("    POST /sessions")
+    console.print("    POST /sessions/{id}/messages")
+    console.print("    GET  /sessions/{id}/stream")
     if not no_a2a:
-        console.print(f"    GET  /.well-known/agent.json")
-        console.print(f"    POST /tasks/send")
-        console.print(f"    POST /tasks/sendSubscribe")
+        console.print("    GET  /.well-known/agent.json")
+        console.print("    POST /tasks/send")
+        console.print("    POST /tasks/sendSubscribe")
     console.print()
 
     uvicorn.run(

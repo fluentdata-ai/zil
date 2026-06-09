@@ -19,6 +19,25 @@ from fastapi.testclient import TestClient
 from zil.commands.serve import _create_app
 
 
+def _a2a_agent_card_cls():
+    """Return the a2a-sdk pydantic AgentCard model, or skip if unavailable.
+
+    The pydantic model lives at ``a2a.types`` in a2a-sdk 0.3.x (what google-adk
+    pins) and at ``a2a.compat.v0_3.types`` in 1.x — try both.
+    """
+    import importlib
+
+    for path in ("a2a.types", "a2a.compat.v0_3.types"):
+        try:
+            module = importlib.import_module(path)
+        except ImportError:
+            continue
+        cls = getattr(module, "AgentCard", None)
+        if cls is not None and hasattr(cls, "model_validate"):
+            return cls
+    pytest.skip("a2a-sdk pydantic AgentCard model not available")
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -254,24 +273,49 @@ class TestStreaming:
 
 class TestA2AAgentCard:
     def test_agent_card_endpoint(self, client):
-        resp = client.get("/.well-known/agent.json")
+        # Current well-known path per A2A v0.3 (a2a-sdk 1.0.x).
+        resp = client.get("/.well-known/agent-card.json")
         assert resp.status_code == 200
         card = resp.json()
         assert card["name"] == "serve-test"
         assert card["version"] == "1.0.0"
         assert card["capabilities"]["streaming"] is True
 
-    def test_agent_card_url_from_host(self, client):
+    def test_agent_card_is_a2a_conformant(self, client):
+        """Card advertises protocol version + preferred transport (A2A v0.3)."""
+        card = client.get("/.well-known/agent-card.json").json()
+        assert card["protocolVersion"] == "0.3.0"
+        assert card["preferredTransport"] == "JSONRPC"
+
+    def test_agent_card_legacy_path_is_aliased(self, client):
+        """The pre-0.3 well-known path still resolves (deprecated alias)."""
+        legacy = client.get("/.well-known/agent.json")
+        assert legacy.status_code == 200
+        assert legacy.json()["name"] == "serve-test"
+
+    def test_agent_card_validates_against_a2a_sdk(self, client):
+        """The served card validates against the real A2A pydantic model
+        (a2a-sdk) — conformance enforced by the spec types, not just shapes."""
+        agent_card_cls = _a2a_agent_card_cls()
+        card = client.get("/.well-known/agent-card.json").json()
+        # Raises pydantic.ValidationError if the card is non-conformant.
+        agent_card_cls.model_validate(card)
+
+    def test_agent_card_url_is_jsonrpc_endpoint(self, client):
         resp = client.get(
-            "/.well-known/agent.json",
+            "/.well-known/agent-card.json",
             headers={"host": "myagent.run.app", "x-forwarded-proto": "https"},
         )
         card = resp.json()
-        assert card["url"] == "https://myagent.run.app"
+        # For JSONRPC transport the card url is the JSON-RPC endpoint.
+        assert card["url"] == "https://myagent.run.app/a2a"
+        assert card["additionalInterfaces"] == [
+            {"url": "https://myagent.run.app/a2a", "transport": "JSONRPC"}
+        ]
 
     def test_agent_card_no_skills_is_empty(self, client):
         """A project without spec.skills advertises an empty skills list."""
-        resp = client.get("/.well-known/agent.json")
+        resp = client.get("/.well-known/agent-card.json")
         assert resp.json()["skills"] == []
 
     def test_agent_card_advertises_real_skills(self, tmp_path):
@@ -304,12 +348,17 @@ class TestA2AAgentCard:
         )
 
         client = TestClient(_create_app(tmp_path))
-        card = client.get("/.well-known/agent.json").json()
+        card = client.get("/.well-known/agent-card.json").json()
         skills = {s["id"]: s for s in card["skills"]}
         assert set(skills) == {"refund", "lookup"}
         assert skills["refund"]["name"] == "refund"
         assert skills["refund"]["description"] == "Issue a customer refund."
         assert skills["lookup"]["name"] == "invoice_lookup"
+        # AgentSkill.tags is required by the current A2A spec (a2a-sdk 0.3.x)
+        assert skills["refund"]["tags"] == []
+        assert skills["lookup"]["tags"] == []
+        # Strict: the skilled card validates against the real A2A model.
+        _a2a_agent_card_cls().model_validate(card)
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +405,78 @@ class TestA2ATasks:
         # Should contain SSE data with task status
         assert "working" in resp.text
         assert "completed" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# TestA2AJsonRpc (current A2A spec transport)
+# ---------------------------------------------------------------------------
+
+
+class TestA2AJsonRpc:
+    def _rpc(self, client, method, params, rpc_id=1):
+        return client.post(
+            "/a2a",
+            json={"jsonrpc": "2.0", "id": rpc_id, "method": method, "params": params},
+        )
+
+    def test_message_send_returns_task(self, client):
+        resp = self._rpc(
+            client,
+            "message/send",
+            {"message": {"role": "user", "kind": "message",
+                         "parts": [{"kind": "text", "text": "Plan the feature"}]}},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["jsonrpc"] == "2.0"
+        assert body["id"] == 1
+        result = body["result"]
+        assert result["kind"] == "task"
+        assert result["status"]["state"] == "completed"
+        assert result["artifacts"][0]["parts"][0]["kind"] == "text"
+
+    def test_message_send_then_tasks_get(self, client):
+        send = self._rpc(
+            client,
+            "message/send",
+            {"message": {"parts": [{"kind": "text", "text": "hi"}]}},
+        ).json()
+        task_id = send["result"]["id"]
+        got = self._rpc(client, "tasks/get", {"id": task_id}, rpc_id=2).json()
+        assert got["id"] == 2
+        assert got["result"]["id"] == task_id
+        assert got["result"]["status"]["state"] == "completed"
+
+    def test_tasks_get_unknown_is_rpc_error(self, client):
+        body = self._rpc(client, "tasks/get", {"id": "nope"}).json()
+        assert body["error"]["code"] == -32001
+
+    def test_unknown_method_is_rpc_error(self, client):
+        body = self._rpc(client, "does/not/exist", {}).json()
+        assert body["error"]["code"] == -32601
+
+    def test_invalid_request_envelope(self, client):
+        resp = client.post("/a2a", json={"method": "message/send"})  # no jsonrpc
+        assert resp.json()["error"]["code"] == -32600
+
+    def test_message_stream_sse(self, client):
+        resp = self._rpc(
+            client,
+            "message/stream",
+            {"message": {"parts": [{"kind": "text", "text": "stream me"}]}},
+        )
+        assert "text/event-stream" in resp.headers["content-type"]
+        assert "status-update" in resp.text
+        assert '"final": true' in resp.text
+
+    def test_legacy_text_part_type_still_parsed(self, client):
+        """Inbound parts using the legacy `type` key are still read."""
+        body = self._rpc(
+            client,
+            "message/send",
+            {"message": {"parts": [{"type": "text", "text": "legacy part"}]}},
+        ).json()
+        assert body["result"]["status"]["state"] == "completed"
 
 
 # ---------------------------------------------------------------------------
