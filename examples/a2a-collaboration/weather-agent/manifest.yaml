@@ -1,0 +1,37 @@
+apiVersion: zil/v1
+kind: Agent
+metadata:
+  name: weather-agent
+  version: 0.1.0
+  description: >
+    A specialist agent that answers weather questions. It is the A2A *callee*
+    in the collaboration example — it advertises a `get-forecast` skill on its
+    Agent Card and is invoked by the trip-planner over A2A.
+  labels:
+    team: example
+    role: specialist
+spec:
+  runtime:
+    framework: adk
+    language: python
+    python_version: "3.12"
+    llm:
+      adapter: ./adapters/llm.yaml
+    resource_limits:
+      max_tokens_per_request: 4096
+      max_duration_seconds: 60
+  identity: ./identity
+  # Skills declared here are advertised on the A2A Agent Card
+  # (/.well-known/agent-card.json), so any A2A client can introspect and
+  # select them. The skill id is the directory name under ./skills.
+  skills: ./skills
+  cost:
+    max_tokens_per_request: 4096
+    max_tokens_per_session: 50000
+    alert_threshold_pct: 80
+    track_by_model: true
+  env:
+    - name: GOOGLE_API_KEY
+      description: Gemini API key
+      required: true
+      secret: true

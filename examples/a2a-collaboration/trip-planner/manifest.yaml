@@ -1,0 +1,63 @@
+apiVersion: zil/v1
+kind: Agent
+metadata:
+  name: trip-planner
+  version: 0.1.0
+  description: >
+    A planning agent that helps users plan trips. It is the A2A *caller* in the
+    collaboration example — it delegates weather questions to the weather-agent
+    over A2A by declaring it in spec.collaborators.
+  labels:
+    team: example
+    role: orchestrator
+spec:
+  runtime:
+    framework: adk
+    language: python
+    python_version: "3.12"
+    llm:
+      adapter: ./adapters/llm.yaml
+    resource_limits:
+      max_tokens_per_request: 8192
+      max_duration_seconds: 120
+  identity: ./identity
+  cost:
+    max_tokens_per_request: 8192
+    max_tokens_per_session: 100000
+    alert_threshold_pct: 80
+    track_by_model: true
+
+  # ---- A2A collaboration (ZIL-RFC-005) --------------------------------------
+  # Declare the peers this agent may call. Each peer becomes a callable tool
+  # (ADK adapter) and is reachable via the native A2APeerClient. The `skills`
+  # allowlist is enforced *before* any network call (least authority).
+  collaborators:
+    # The handle matches the peer's metadata.name so `zil topology` links them.
+    - name: weather-agent
+      # Static discovery: explicit URL (use `ref:` for registry discovery).
+      # Defaults to the local weather-agent started with `zil serve --port 8001`.
+      url: ${WEATHER_AGENT_URL}
+      # Only this peer skill may be invoked. The id matches the directory name
+      # under the weather-agent's ./skills (advertised on its Agent Card).
+      skills:
+        - get-forecast
+      # Local quickstart uses no auth (zil serve is unauthenticated locally).
+      # This intentionally emits a validate warning — see the README for the
+      # production patterns (`bearer`, `gcp-id-token`).
+      auth: none
+      # Control what context crosses the trust boundary on each call.
+      context_transfer:
+        send: message_only
+        receive: artifacts
+        redact:
+          - user_email
+
+  env:
+    - name: GOOGLE_API_KEY
+      description: Gemini API key
+      required: true
+      secret: true
+    - name: WEATHER_AGENT_URL
+      description: Base URL of the weather-agent A2A peer (e.g. http://localhost:8001)
+      required: true
+      default: http://localhost:8001

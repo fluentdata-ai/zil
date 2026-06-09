@@ -107,11 +107,17 @@ class PeerResolver(Protocol):
 
 @runtime_checkable
 class Authenticator(Protocol):
-    """Produces auth headers for an outbound peer call (one impl per auth mode)."""
+    """Produces auth headers for an outbound peer call (one impl per auth mode).
+
+    NOTE (divergence from RFC-005 §5, codebase-wins): the target audience is
+    bound at construction (the resolved peer URL), so ``headers()`` takes no
+    argument — that matches what is available at httpx request time, where only
+    the request exists and the audience must already be known to mint a token.
+    """
 
     mode: str
 
-    def headers(self, target: AgentCard) -> dict[str, str]: ...
+    def headers(self) -> dict[str, str]: ...
 
 
 @runtime_checkable

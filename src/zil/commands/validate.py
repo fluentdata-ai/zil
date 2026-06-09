@@ -28,17 +28,26 @@ console = Console()
     default="text",
     help="Output format (default: text).",
 )
-def validate(project_dir: Path, output_format: str) -> None:
+@click.option(
+    "--online",
+    is_flag=True,
+    default=False,
+    help="Fetch each collaborator's Agent Card and verify declared skills "
+    "(requires network access).",
+)
+def validate(project_dir: Path, output_format: str, online: bool) -> None:
     """Validate a Zil agent project against the manifest schema.
 
     Checks manifest.yaml against the spec, resolves referenced files,
     and validates sub-schemas (identity, adapters, evals, observability).
+    With --online, also verifies declared collaborator skills against each
+    peer's live Agent Card.
 
     Exit codes: 0 = valid, 1 = invalid, 2 = warnings only.
     """
     from zil.schema.loader import validate_project
 
-    result = validate_project(project_dir)
+    result = validate_project(project_dir, online=online)
 
     if output_format == "json":
         _print_json(result)

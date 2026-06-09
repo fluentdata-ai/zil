@@ -387,6 +387,25 @@ class TestRemoteAgents:
 
         assert _build_remote_agents(self._spec_with([])) == []
 
+    @staticmethod
+    def _close(remote):
+        """Close any attached httpx client to avoid unclosed-client warnings.
+
+        Uses a throwaway loop. ``new_event_loop()`` does not install itself as
+        the current loop, so other tests relying on ``asyncio.get_event_loop()``
+        are undisturbed.
+        """
+        import asyncio
+
+        client = getattr(remote, "_httpx_client", None)
+        if client is None:
+            return
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(client.aclose())
+        finally:
+            loop.close()
+
     def test_wraps_peer_as_agent_tool(self):
         pytest.importorskip("google.adk")
         from zil.collaboration.contract import PeerRef
@@ -394,7 +413,7 @@ class TestRemoteAgents:
 
         spec = self._spec_with([
             PeerRef(name="billing", url="https://billing.run.app",
-                    skills=["refund"]),
+                    skills=["refund"], auth="none"),
         ])
         tools = _build_remote_agents(spec)
         assert len(tools) == 1
@@ -406,6 +425,7 @@ class TestRemoteAgents:
         assert remote._agent_card_source.startswith("https://billing.run.app")
         # The per-peer skill allowlist is surfaced to the model.
         assert "refund" in remote.description
+        self._close(remote)
 
     def test_unresolvable_env_url_is_skipped(self):
         pytest.importorskip("google.adk")
@@ -416,3 +436,46 @@ class TestRemoteAgents:
             PeerRef(name="billing", url="${DEFINITELY_UNSET_ENV_VAR_XYZ}"),
         ])
         assert _build_remote_agents(spec) == []
+
+    def test_none_auth_still_attaches_identity_client(self):
+        pytest.importorskip("google.adk")
+        from zil.collaboration.contract import PeerRef
+        from zil.collaboration.http import PeerRequestAuth
+        from zil.sdk.frameworks.adk.backend import _build_remote_agents
+
+        spec = self._spec_with([
+            PeerRef(name="billing", url="https://billing.run.app", auth="none"),
+        ])
+        remote = _build_remote_agents(spec)[0].agent
+        # 'none' still gets a client to carry the caller-identity header.
+        assert remote._httpx_client is not None
+        assert isinstance(remote._httpx_client.auth, PeerRequestAuth)
+        # ...but no credentials authenticator is attached.
+        assert remote._httpx_client.auth._authenticator is None
+        self._close(remote)
+
+    def test_bearer_auth_attaches_authenticated_client(self):
+        pytest.importorskip("google.adk")
+        from zil.collaboration.contract import PeerRef
+        from zil.sdk.frameworks.adk.backend import _build_remote_agents
+
+        spec = self._spec_with([
+            PeerRef(name="billing", url="https://billing.run.app", auth="bearer"),
+        ])
+        remote = _build_remote_agents(spec)[0].agent
+        # Non-'none' modes get an httpx client carrying the auth flow.
+        assert remote._httpx_client is not None
+        assert remote._httpx_client.auth._authenticator is not None
+        self._close(remote)
+
+    def test_caller_identity_is_the_agent_name(self):
+        pytest.importorskip("google.adk")
+        from zil.collaboration.contract import PeerRef
+        from zil.sdk.frameworks.adk.backend import _build_remote_agents
+
+        spec = self._spec_with([
+            PeerRef(name="billing", url="https://billing.run.app", auth="none"),
+        ])
+        remote = _build_remote_agents(spec)[0].agent
+        assert remote._httpx_client.auth._caller == spec.name
+        self._close(remote)

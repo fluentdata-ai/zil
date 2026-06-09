@@ -3,6 +3,19 @@
 Framework-neutral contract + discovery for calling peer agents over A2A.
 """
 
+from zil.collaboration.auth import (
+    BearerAuthenticator,
+    GcpIdTokenAuthenticator,
+    NoneAuthenticator,
+    build_authenticator,
+)
+from zil.collaboration.client import (
+    A2APeerClient,
+    PeerArtifact,
+    PeerCallResult,
+    PeerStreamEvent,
+    SkillNotAllowedError,
+)
 from zil.collaboration.contract import (
     AgentCard,
     AgentSkill,
@@ -12,7 +25,17 @@ from zil.collaboration.contract import (
     PeerResolver,
     RemoteAgent,
 )
-from zil.collaboration.discovery import StaticResolver, interpolate_env
+from zil.collaboration.discovery import (
+    RegistryResolver,
+    StaticResolver,
+    interpolate_env,
+)
+from zil.collaboration.topology import (
+    TopologyGraph,
+    build_topology_graph,
+    find_cycles,
+    manifest_agent_name,
+)
 
 __all__ = [
     "AgentCard",
@@ -23,5 +46,19 @@ __all__ = [
     "PeerResolver",
     "RemoteAgent",
     "StaticResolver",
+    "RegistryResolver",
     "interpolate_env",
+    "build_authenticator",
+    "NoneAuthenticator",
+    "BearerAuthenticator",
+    "GcpIdTokenAuthenticator",
+    "TopologyGraph",
+    "build_topology_graph",
+    "find_cycles",
+    "manifest_agent_name",
+    "A2APeerClient",
+    "PeerCallResult",
+    "PeerArtifact",
+    "PeerStreamEvent",
+    "SkillNotAllowedError",
 ]

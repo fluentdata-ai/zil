@@ -11,11 +11,20 @@ import yaml
 
 from zil.collaboration.contract import (
     AgentCard,
+    AgentSkill,
     ContextTransferPolicy,
     PeerRef,
 )
-from zil.collaboration.discovery import StaticResolver, interpolate_env
-from zil.schema.loader import ValidationResult, _check_collaborators
+from zil.collaboration.discovery import (
+    RegistryResolver,
+    StaticResolver,
+    interpolate_env,
+)
+from zil.schema.loader import (
+    ValidationResult,
+    _check_collaborator_skills_online,
+    _check_collaborators,
+)
 from zil.sdk.loader import load_project
 
 # ---------------------------------------------------------------------------
@@ -110,6 +119,58 @@ class TestStaticResolver:
         assert captured["url"] == "https://billing"
         assert card.skill_ids() == ["refund"]
         # Card url backfilled from the resolved url when card omits it.
+        assert card.url == "https://billing"
+
+
+class TestRegistryResolver:
+    def test_resolves_ref_via_injected_registry(self):
+        r = RegistryResolver(registry={"billing": "https://billing.run.app"})
+        ref = PeerRef(name="b", ref="zil://fleet/billing")
+        assert r.resolve_url(ref) == "https://billing.run.app"
+
+    def test_resolves_ref_from_env(self):
+        r = RegistryResolver(
+            env={"ZIL_FLEET_REGISTRY": "billing=https://b,invoices=https://i"}
+        )
+        ref = PeerRef(name="i", ref="zil://fleet/invoices")
+        assert r.resolve_url(ref) == "https://i"
+
+    def test_plain_url_peer_is_delegated(self):
+        r = RegistryResolver(registry={}, env={"U": "https://x"})
+        assert r.resolve_url(PeerRef(name="p", url="${U}")) == "https://x"
+
+    def test_unconfigured_registry_raises(self):
+        r = RegistryResolver(registry={})
+        ref = PeerRef(name="b", ref="zil://fleet/billing")
+        with pytest.raises(ValueError, match="no .*registry is configured"):
+            r.resolve_url(ref)
+
+    def test_unknown_ref_raises(self):
+        r = RegistryResolver(registry={"billing": "https://b"})
+        ref = PeerRef(name="x", ref="zil://fleet/unknown")
+        with pytest.raises(ValueError, match="not found in the registry"):
+            r.resolve_url(ref)
+
+    def test_bad_scheme_raises(self):
+        r = RegistryResolver(registry={"billing": "https://b"})
+        ref = PeerRef(name="x", ref="http://billing")
+        with pytest.raises(ValueError, match="must use the"):
+            r.resolve_url(ref)
+
+    def test_resolve_fetches_card(self):
+        captured = {}
+
+        def fake_fetch(url):
+            captured["url"] = url
+            return {"name": "billing", "url": "", "version": "1",
+                    "skills": [{"id": "refund", "name": "Refund", "tags": []}]}
+
+        r = RegistryResolver(
+            registry={"billing": "https://billing"}, fetcher=fake_fetch
+        )
+        card = r.resolve(PeerRef(name="b", ref="zil://fleet/billing"))
+        assert captured["url"] == "https://billing"
+        assert card.skill_ids() == ["refund"]
         assert card.url == "https://billing"
 
 
@@ -224,3 +285,80 @@ class TestCheckCollaborators:
             {"name": "b", "url": "u2"},
         ])
         assert any(s == "fail" and "duplicate" in m for s, m in statuses)
+
+    def test_self_reference_fails(self):
+        # An agent listing itself is a topology self-cycle (RFC-005 §10.1).
+        manifest = {
+            "metadata": {"name": "orchestrator"},
+            "spec": {"collaborators": [{"name": "orchestrator", "url": "u"}]},
+        }
+        result = ValidationResult()
+        _check_collaborators(manifest, result)
+        statuses = [(c.status, c.message) for c in result.checks]
+        assert any(
+            s == "fail" and "self-reference" in m for s, m in statuses
+        )
+
+    def test_non_self_reference_has_no_self_fail(self):
+        manifest = {
+            "metadata": {"name": "orchestrator"},
+            "spec": {"collaborators": [{"name": "billing", "url": "u"}]},
+        }
+        result = ValidationResult()
+        _check_collaborators(manifest, result)
+        assert not any(
+            "self-reference" in c.message for c in result.checks
+        )
+
+
+class _FakeResolver:
+    """Resolver returning a card with a fixed skill set, or raising on fetch."""
+
+    def __init__(self, skills=None, *, error=None):
+        self._skills = skills or []
+        self._error = error
+
+    def resolve(self, ref):
+        if self._error is not None:
+            raise self._error
+        return AgentCard(
+            name=ref.name, description="", url="https://peer", version="1",
+            skills=[AgentSkill(id=s, name=s) for s in self._skills],
+        )
+
+
+class TestOnlineSkillValidation:
+    def _run(self, collaborators, resolver):
+        manifest = {"spec": {"collaborators": collaborators}}
+        result = ValidationResult()
+        _check_collaborator_skills_online(manifest, result, resolver=resolver)
+        return [(c.status, c.message) for c in result.checks]
+
+    def test_advertised_skill_passes(self):
+        statuses = self._run(
+            [{"name": "billing", "url": "u", "skills": ["refund"]}],
+            _FakeResolver(skills=["refund", "lookup"]),
+        )
+        assert any(s == "pass" and "online skill check OK" in m for s, m in statuses)
+
+    def test_unadvertised_skill_fails(self):
+        statuses = self._run(
+            [{"name": "billing", "url": "u", "skills": ["delete"]}],
+            _FakeResolver(skills=["refund"]),
+        )
+        assert any(s == "fail" and "not " in m and "advertised" in m
+                   for s, m in statuses)
+
+    def test_fetch_failure_warns(self):
+        statuses = self._run(
+            [{"name": "billing", "url": "u", "skills": ["refund"]}],
+            _FakeResolver(error=RuntimeError("down")),
+        )
+        assert any(s == "warn" and "could not fetch" in m for s, m in statuses)
+
+    def test_no_declared_skills_is_skipped(self):
+        statuses = self._run(
+            [{"name": "billing", "url": "u"}],
+            _FakeResolver(skills=["refund"]),
+        )
+        assert statuses == []

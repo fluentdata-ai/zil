@@ -1,0 +1,24 @@
+# Guardrails — runtime-enforced rules for the agent
+# Docs: https://getzil.dev/docs/identity/guardrails
+
+detection:
+  prompt_injection: true
+  pii_output: true
+  pii_input: false
+
+blocked_patterns: []
+
+denied_topics: []
+
+output_constraints:
+  max_response_length: 2000
+
+hard_blocks:
+  - topic: illegal_activity
+    description: Refuse requests for illegal activities.
+  - topic: out_of_scope
+    description: Decline non-weather requests and redirect to the caller.
+
+escalation_triggers:
+  - condition: user_requests_human
+    action: Offer to connect the user with a human operator.

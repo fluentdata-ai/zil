@@ -58,8 +58,15 @@ def load_schema() -> dict:
         return json.load(f)
 
 
-def validate_project(project_dir: Path) -> ValidationResult:
-    """Validate a Zil project directory against the manifest schema."""
+def validate_project(
+    project_dir: Path, *, online: bool = False, resolver: object | None = None
+) -> ValidationResult:
+    """Validate a Zil project directory against the manifest schema.
+
+    When *online* is true, additionally fetch each declared collaborator's Agent
+    Card and verify its ``skills`` allowlist against the peer's advertised
+    skills (network access required). *resolver* is injectable for testing.
+    """
     result = ValidationResult()
 
     manifest_path = project_dir / "manifest.yaml"
@@ -100,6 +107,8 @@ def validate_project(project_dir: Path) -> ValidationResult:
     _check_skills(project_dir, manifest, result)
     _check_agents(project_dir, manifest, result)
     _check_collaborators(manifest, result)
+    if online:
+        _check_collaborator_skills_online(manifest, result, resolver=resolver)
     _check_service(manifest, result)
     _check_memory(project_dir, manifest, result)
 
@@ -803,10 +812,22 @@ def _check_collaborators(manifest: dict, result: ValidationResult) -> None:
     if not collaborators:
         return
 
+    own_name = (manifest.get("metadata") or {}).get("name")
+
     names: list[str] = []
     for peer in collaborators:
         name = peer.get("name", "<unnamed>")
         names.append(name)
+
+        # Declared topology: an agent must not list itself (self-cycle).
+        if own_name and name == own_name:
+            result.checks.append(
+                CheckResult(
+                    "fail",
+                    f"spec.collaborators[{name}] — agent declares itself as a "
+                    "collaborator (topology self-reference)",
+                )
+            )
 
         has_url = bool(peer.get("url"))
         has_ref = bool(peer.get("ref"))
@@ -853,6 +874,71 @@ def _check_collaborators(manifest: dict, result: ValidationResult) -> None:
             f"spec.collaborators — {len(collaborators)} peer(s): {', '.join(names)}",
         )
     )
+
+
+def _check_collaborator_skills_online(
+    manifest: dict, result: ValidationResult, *, resolver: object | None = None
+) -> None:
+    """Fetch each peer's Agent Card and verify declared skills are advertised.
+
+    Network access required. Peers without a declared ``skills`` allowlist are
+    skipped (they accept all skills). A fetch failure is a warning (the peer may
+    be down at validate time); a declared skill the peer does not advertise is a
+    failure (a guaranteed runtime mismatch). *resolver* is injectable for tests.
+    """
+    collaborators = manifest.get("spec", {}).get("collaborators")
+    if not collaborators:
+        return
+
+    from zil.collaboration.contract import PeerRef
+
+    if resolver is None:
+        from zil.collaboration.discovery import RegistryResolver
+
+        resolver = RegistryResolver()
+
+    for peer in collaborators:
+        name = peer.get("name", "<unnamed>")
+        declared = peer.get("skills")
+        if not declared:
+            continue
+
+        ref = PeerRef(
+            name=name,
+            url=peer.get("url"),
+            ref=peer.get("ref"),
+            skills=list(declared),
+        )
+        try:
+            card = resolver.resolve(ref)
+        except Exception as exc:  # noqa: BLE001 — surface any fetch failure as a warning
+            result.checks.append(
+                CheckResult(
+                    "warn",
+                    f"spec.collaborators[{name}] — could not fetch Agent Card "
+                    f"for online skill check: {exc}",
+                )
+            )
+            continue
+
+        advertised = set(card.skill_ids())
+        missing = [s for s in declared if s not in advertised]
+        if missing:
+            result.checks.append(
+                CheckResult(
+                    "fail",
+                    f"spec.collaborators[{name}].skills — {missing} not "
+                    f"advertised by peer (advertised: {sorted(advertised)})",
+                )
+            )
+        else:
+            result.checks.append(
+                CheckResult(
+                    "pass",
+                    f"spec.collaborators[{name}] — online skill check OK "
+                    f"({len(declared)} skill(s))",
+                )
+            )
 
 
 def _check_service(manifest: dict, result: ValidationResult) -> None:

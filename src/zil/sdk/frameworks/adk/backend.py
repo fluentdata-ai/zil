@@ -265,14 +265,19 @@ def _build_remote_agents(spec: AgentSpec) -> list[Any]:
     from google.adk.agents.remote_a2a_agent import RemoteA2aAgent
     from google.adk.tools.agent_tool import AgentTool
 
-    from zil.collaboration.discovery import StaticResolver
+    from zil.collaboration.auth import NoneAuthenticator, build_authenticator
+    from zil.collaboration.discovery import RegistryResolver
+    from zil.collaboration.http import build_peer_http_client
 
     try:
         from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
     except ImportError:
         AGENT_CARD_WELL_KNOWN_PATH = "/.well-known/agent-card.json"  # noqa: N806
 
-    resolver = StaticResolver()
+    caller = spec.name or ""
+    # RegistryResolver is a superset of StaticResolver: it handles plain ``url:``
+    # peers and ``ref: zil://fleet/<name>`` registry discovery (RFC-005 §9).
+    resolver = RegistryResolver()
     agent_tools: list[Any] = []
     for peer in collaborators:
         try:
@@ -296,17 +301,29 @@ def _build_remote_agents(spec: AgentSpec) -> list[Any]:
                 "sending a natural-language message."
             )
 
+        # Every outbound call asserts caller identity (RFC-005 §10.3) and, for
+        # any mode except 'none', attaches inter-agent auth (§10.2).
+        authenticator = build_authenticator(peer, base_url)
+        auth_for_client = (
+            None if isinstance(authenticator, NoneAuthenticator) else authenticator
+        )
+        httpx_client = build_peer_http_client(
+            caller=caller, authenticator=auth_for_client
+        )
+
         remote = RemoteA2aAgent(
             name=peer.name,
             agent_card=card_url,
             description=description,
+            httpx_client=httpx_client,
         )
         agent_tools.append(AgentTool(agent=remote))
         logger.info(
-            "Collaborator %r wired as RemoteA2aAgent (card=%s, skills=%s)",
+            "Collaborator %r wired as RemoteA2aAgent (card=%s, skills=%s, auth=%s)",
             peer.name,
             card_url,
             allowed or "all",
+            peer.auth,
         )
 
     return agent_tools
