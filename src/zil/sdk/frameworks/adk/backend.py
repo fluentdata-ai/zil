@@ -398,7 +398,6 @@ class AdkBackend:
                             getattr(spec.memory_provider, "name", "?"))
 
         # Build sub-agents from spec.sub_agent_specs and attach as AgentTool
-        enable_mcp = bool(spec.mcp_server_configs) or bool(spec.tool_callables)
         if spec.context and spec.context.agents:
             agent_tools = _build_sub_agents(spec, enable_mcp=True)
             all_tools = all_tools + agent_tools
@@ -453,7 +452,6 @@ class AdkBackend:
             trace_mode: Enable OTLP trace export
             trace_console: Print spans to stderr
         """
-        import asyncio
         import shutil
         import subprocess
         import sys
@@ -685,7 +683,12 @@ class AdkBackend:
                 if event.content and event.content.parts:
                     for part in event.content.parts:
                         text = getattr(part, 'text', None)
-                        if text and not event.get_function_calls() and not event.get_function_responses():
+                        is_plain_text = (
+                            text
+                            and not event.get_function_calls()
+                            and not event.get_function_responses()
+                        )
+                        if is_plain_text:
                             text_parts.append(text)
                             yield SessionEvent(type="text", text=text)
 

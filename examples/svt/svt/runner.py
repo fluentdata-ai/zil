@@ -93,7 +93,11 @@ class TaskRunner:
         finally:
             reset_workspace(token)
 
-        log.info("[%s] execute phase done. response_chars=%d", self.issue_key, len(result.get("agent_response", "")))
+        log.info(
+            "[%s] execute phase done. response_chars=%d",
+            self.issue_key,
+            len(result.get("agent_response", "")),
+        )
         return result
 
     async def run(self) -> dict:
@@ -143,7 +147,11 @@ class TaskRunner:
             # VTA generated the plan as text but didn't call write_file.
             # Write it ourselves so execute_plan() can find it later.
             plan_path.write_text(agent_text, encoding="utf-8")
-            log.info("[%s] plan file written from agent response (%d chars)", self.issue_key, len(agent_text))
+            log.info(
+                "[%s] plan file written from agent response (%d chars)",
+                self.issue_key,
+                len(agent_text),
+            )
 
         plan_exists = plan_path.is_file()
         if plan_exists:
@@ -211,19 +219,34 @@ class TaskRunner:
             if event.is_final_response():
                 author = getattr(event, "author", "?")
                 has_content = bool(event.content and event.content.parts)
-                log.debug("[%s] final_response from=%s has_content=%s", self.issue_key, author, has_content)
+                log.debug(
+                    "[%s] final_response from=%s has_content=%s",
+                    self.issue_key,
+                    author,
+                    has_content,
+                )
                 if has_content:
                     text = "".join(p.text for p in event.content.parts if p.text)
                     if text:
                         final_text = text
-                        log.debug("[%s] captured final_text (%d chars) from %s", self.issue_key, len(text), author)
+                        log.debug(
+                            "[%s] captured final_text (%d chars) from %s",
+                            self.issue_key,
+                            len(text),
+                            author,
+                        )
 
         plan_path = workspace / f"{self.issue_key}-plan.md"
         plan_exists = plan_path.is_file()
 
         if not final_text and plan_exists:
-            final_text = f"PLAN GENERATED: {self.issue_key}-plan.md\n\n{plan_path.read_text(encoding='utf-8')}"
-            log.info("[%s] agent response was empty — using plan file content (%d chars)", self.issue_key, len(final_text))
+            plan_body = plan_path.read_text(encoding='utf-8')
+            final_text = f"PLAN GENERATED: {self.issue_key}-plan.md\n\n{plan_body}"
+            log.info(
+                "[%s] agent response was empty — using plan file content (%d chars)",
+                self.issue_key,
+                len(final_text),
+            )
 
         return {
             "mode": AGENT_MODE,
@@ -348,8 +371,12 @@ def _fetch_jira_issue(issue_key: str) -> str:
         import certifi
         ssl_ctx = ssl.create_default_context(cafile=certifi.where())
         creds = b64encode(f"{email}:{token}".encode()).decode()
-        url = f"{base_url}/rest/api/3/issue/{issue_key}?fields=summary,description,issuetype,priority,status,assignee,comment"
-        req = Request(url, headers={"Authorization": f"Basic {creds}", "Accept": "application/json"})
+        fields_q = "summary,description,issuetype,priority,status,assignee,comment"
+        url = f"{base_url}/rest/api/3/issue/{issue_key}?fields={fields_q}"
+        req = Request(
+            url,
+            headers={"Authorization": f"Basic {creds}", "Accept": "application/json"},
+        )
         with urlopen(req, timeout=10, context=ssl_ctx) as resp:
             data = json.loads(resp.read())
         fields = data.get("fields", {})

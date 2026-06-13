@@ -179,8 +179,11 @@ def docker_serve(
         ".git", ".venv", "__pycache__", "*.pyc", ".ruff_cache",
         "node_modules", ".ruff_cache", "*.egg-info",
     )
+    skip_names = {
+        ".git", ".venv", "__pycache__", ".ruff_cache", "node_modules", "Dockerfile",
+    }
     for item in project_dir.iterdir():
-        if item.name in {".git", ".venv", "__pycache__", ".ruff_cache", "node_modules", "Dockerfile"}:
+        if item.name in skip_names:
             continue
         dest = temp_path / item.name
         if item.is_dir():

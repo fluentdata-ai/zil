@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-_runners: dict[str, "TaskRunner"] = {}
+_runners: dict[str, TaskRunner] = {}
 
 
 async def work_on_ticket(issue_key: str) -> dict:
@@ -53,7 +53,11 @@ async def work_on_ticket(issue_key: str) -> dict:
             "status": "ok",
             "plan_exists": result.get("plan_exists", False),
             "workspace": result.get("workspace", ""),
-            "plan": f"\n\n{plan_content}\n\n---\nDoes this plan look good? You can ask for corrections, or say **go!** to start implementation.",
+            "plan": (
+                f"\n\n{plan_content}\n\n---\n"
+                "Does this plan look good? You can ask for corrections, "
+                "or say **go!** to start implementation."
+            ),
         }
     except Exception as exc:  # noqa: BLE001
         log.exception("work_on_ticket: plan failed for %s", issue_key)

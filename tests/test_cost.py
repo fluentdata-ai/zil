@@ -4,11 +4,8 @@ from __future__ import annotations
 
 import threading
 
-import pytest
-
-from zil.sdk.cost import CostResult, CostStatus, CostTracker, TokenCounts, UsageRecord
+from zil.sdk.cost import CostStatus, CostTracker, TokenCounts, UsageRecord
 from zil.sdk.cost_callback import CostCallback
-
 
 # ---------------------------------------------------------------------------
 # CostTracker — basic recording
@@ -310,7 +307,7 @@ class TestValidateCost:
 
     def test_no_cost_config_warns(self, tmp_path):
         """Missing spec.cost produces a warning."""
-        from zil.schema.loader import CheckResult, ValidationResult, _check_cost
+        from zil.schema.loader import ValidationResult, _check_cost
 
         manifest = {"spec": {"runtime": {}}}
         result = ValidationResult()
@@ -320,7 +317,7 @@ class TestValidateCost:
 
     def test_cost_config_present(self, tmp_path):
         """Configured spec.cost produces a pass."""
-        from zil.schema.loader import CheckResult, ValidationResult, _check_cost
+        from zil.schema.loader import ValidationResult, _check_cost
 
         manifest = {"spec": {"runtime": {}, "cost": {
             "max_tokens_per_request": 4096,
@@ -401,7 +398,9 @@ class TestSchemaCost:
             "detection:\n  prompt_injection: true\n  pii_output: true\n"
         )
         (tmp_path / "adapters").mkdir()
-        (tmp_path / "adapters" / "llm.yaml").write_text("provider: gemini\nmodel: gemini-2.0-flash\n")
+        (tmp_path / "adapters" / "llm.yaml").write_text(
+            "provider: gemini\nmodel: gemini-2.0-flash\n"
+        )
 
         result = validate_project(tmp_path)
         # Schema must pass (no fail on spec.cost)

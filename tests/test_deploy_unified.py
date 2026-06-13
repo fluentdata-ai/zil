@@ -141,11 +141,16 @@ class TestDeployModeRouting:
         (tmp_path / "identity").mkdir()
         (tmp_path / "identity" / "persona.md").write_text("You are a test agent.")
         (tmp_path / "adapters").mkdir()
-        (tmp_path / "adapters" / "llm.yaml").write_text("provider: gemini\nmodel: gemini-3.5-flash\n")
+        (tmp_path / "adapters" / "llm.yaml").write_text(
+            "provider: gemini\nmodel: gemini-3.5-flash\n"
+        )
         (tmp_path / "test_agent").mkdir()  # module dir
 
         runner = CliRunner()
-        with patch.dict(os.environ, {"GOOGLE_CLOUD_PROJECT": "test-proj", "GOOGLE_CLOUD_REGION": "us-central1"}):
+        with patch.dict(
+            os.environ,
+            {"GOOGLE_CLOUD_PROJECT": "test-proj", "GOOGLE_CLOUD_REGION": "us-central1"},
+        ):
             with patch("subprocess.call", return_value=0) as mock_call:
                 with patch("shutil.which", return_value="/usr/bin/gcloud"):
                     result = runner.invoke(cli, [
@@ -179,11 +184,16 @@ class TestDeployModeRouting:
         (tmp_path / "identity").mkdir()
         (tmp_path / "identity" / "persona.md").write_text("You are a test agent.")
         (tmp_path / "adapters").mkdir()
-        (tmp_path / "adapters" / "llm.yaml").write_text("provider: gemini\nmodel: gemini-3.5-flash\n")
+        (tmp_path / "adapters" / "llm.yaml").write_text(
+            "provider: gemini\nmodel: gemini-3.5-flash\n"
+        )
         (tmp_path / "test_agent").mkdir()
 
         runner = CliRunner()
-        with patch.dict(os.environ, {"GOOGLE_CLOUD_PROJECT": "test-proj", "GOOGLE_CLOUD_REGION": "us-central1"}):
+        with patch.dict(
+            os.environ,
+            {"GOOGLE_CLOUD_PROJECT": "test-proj", "GOOGLE_CLOUD_REGION": "us-central1"},
+        ):
             with patch("subprocess.call", return_value=0) as mock_call:
                 with patch("shutil.which", return_value="/usr/bin/gcloud"):
                     result = runner.invoke(cli, [

@@ -22,7 +22,7 @@ import yaml
 from click.testing import CliRunner
 
 from zil.cli import cli
-from zil.schema.loader import CheckResult, validate_project
+from zil.schema.loader import validate_project
 from zil.sdk.frameworks import registry
 from zil.sdk.frameworks.base import (
     AgentSpec,
@@ -32,7 +32,6 @@ from zil.sdk.frameworks.base import (
     WiredAgent,
 )
 from zil.sdk.frameworks.stub.backend import StubBackend, StubWiredAgent
-
 
 # ---------------------------------------------------------------------------
 # BackendRegistry
@@ -245,7 +244,9 @@ class TestCheckFramework:
             (tmp_path / "identity" / "instructions.md").write_text("instructions")
             (tmp_path / "identity" / "guardrails.yaml").write_text("{}")
             (tmp_path / "adapters").mkdir(exist_ok=True)
-            (tmp_path / "adapters" / "llm.yaml").write_text("provider: gemini\nmodel: gemini-2.0-flash")
+            (tmp_path / "adapters" / "llm.yaml").write_text(
+                "provider: gemini\nmodel: gemini-2.0-flash"
+            )
             return tmp_path
         return _make
 
@@ -300,7 +301,10 @@ class TestCheckFramework:
 class TestManifestSchema:
     @pytest.fixture
     def schema(self):
-        schema_path = Path(__file__).parent.parent / "src" / "zil" / "spec" / "v1" / "manifest.schema.json"
+        schema_path = (
+            Path(__file__).parent.parent
+            / "src" / "zil" / "spec" / "v1" / "manifest.schema.json"
+        )
         with open(schema_path) as f:
             return json.load(f)
 
@@ -340,7 +344,11 @@ class TestInitFrameworkFlag:
     def test_init_framework_adk_explicit(self, tmp_path):
         with runner_cli.isolated_filesystem(temp_dir=tmp_path):
             result = runner_cli.invoke(
-                cli, ["init", "test-agent", "--framework", "adk", "--non-interactive", "--skip-install"],
+                cli,
+                [
+                    "init", "test-agent", "--framework", "adk",
+                    "--non-interactive", "--skip-install",
+                ],
                 catch_exceptions=False,
             )
             assert result.exit_code == 0
@@ -350,7 +358,11 @@ class TestInitFrameworkFlag:
     def test_init_framework_unknown_fails(self, tmp_path):
         with runner_cli.isolated_filesystem(temp_dir=tmp_path):
             result = runner_cli.invoke(
-                cli, ["init", "test-agent", "--framework", "nope", "--non-interactive", "--skip-install"],
+                cli,
+                [
+                    "init", "test-agent", "--framework", "nope",
+                    "--non-interactive", "--skip-install",
+                ],
             )
             assert result.exit_code != 0
             assert "Unknown framework" in result.output

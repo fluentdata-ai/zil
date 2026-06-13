@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any
 
 import zil
-
 from svt.tools.filesystem import grep_files, list_files, read_file, set_workspace, write_file
 from svt.tools.shell import run_shell_command
 from svt.tools.task import execute_plan, work_on_ticket

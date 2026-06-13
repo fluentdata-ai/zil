@@ -7,7 +7,6 @@ from click.testing import CliRunner
 
 from zil.cli import cli
 
-
 runner = CliRunner()
 
 
@@ -52,7 +51,11 @@ class TestInit:
 
     def test_init_creates_project(self, tmp_path):
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["init", "my-agent", "--non-interactive", "--skip-install"], catch_exceptions=False)
+            result = runner.invoke(
+                cli,
+                ["init", "my-agent", "--non-interactive", "--skip-install"],
+                catch_exceptions=False,
+            )
             assert result.exit_code == 0
             project = Path("my-agent")
             assert project.exists()
@@ -70,8 +73,14 @@ class TestInit:
 
     def test_init_duplicate_fails(self, tmp_path):
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "dup-agent", "--non-interactive", "--skip-install"], catch_exceptions=False)
-            result = runner.invoke(cli, ["init", "dup-agent", "--non-interactive", "--skip-install"])
+            runner.invoke(
+                cli,
+                ["init", "dup-agent", "--non-interactive", "--skip-install"],
+                catch_exceptions=False,
+            )
+            result = runner.invoke(
+                cli, ["init", "dup-agent", "--non-interactive", "--skip-install"]
+            )
             assert result.exit_code == 1
 
 
@@ -85,15 +94,25 @@ class TestValidate:
 
     def test_validate_scaffolded_project(self, tmp_path):
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "val-agent", "--non-interactive", "--skip-install"], catch_exceptions=False)
+            runner.invoke(
+                cli,
+                ["init", "val-agent", "--non-interactive", "--skip-install"],
+                catch_exceptions=False,
+            )
             result = runner.invoke(cli, ["validate", "--project-dir", "val-agent"])
             # Should pass (exit 0) or warn (exit 2), but not fail
             assert result.exit_code in (0, 2)
 
     def test_validate_json_output(self, tmp_path):
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "json-agent", "--non-interactive", "--skip-install"], catch_exceptions=False)
-            result = runner.invoke(cli, ["validate", "--project-dir", "json-agent", "--format=json"])
+            runner.invoke(
+                cli,
+                ["init", "json-agent", "--non-interactive", "--skip-install"],
+                catch_exceptions=False,
+            )
+            result = runner.invoke(
+                cli, ["validate", "--project-dir", "json-agent", "--format=json"]
+            )
             parsed = json.loads(result.output)
             assert "valid" in parsed
             assert "checks" in parsed
@@ -110,6 +129,7 @@ class TestSchema:
 
     def test_valid_manifest_passes(self):
         import jsonschema
+
         from zil.schema.loader import load_schema
 
         schema = load_schema()
@@ -131,6 +151,7 @@ class TestSchema:
     def test_invalid_manifest_fails(self):
         import jsonschema
         import pytest
+
         from zil.schema.loader import load_schema
 
         schema = load_schema()
@@ -141,6 +162,7 @@ class TestSchema:
     def test_invalid_name_fails(self):
         import jsonschema
         import pytest
+
         from zil.schema.loader import load_schema
 
         schema = load_schema()

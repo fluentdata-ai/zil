@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from textwrap import dedent
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,13 +11,10 @@ import yaml
 
 from zil.sdk.identity import compose_instruction
 from zil.sdk.loader import (
-    IdentityContext,
-    ProjectContext,
     find_project_dir,
     load_project,
 )
 from zil.sdk.telemetry import _resolve_env_refs, setup_telemetry
-
 
 # ---------------------------------------------------------------------------
 # Fixtures — a minimal valid Zil project on disk
@@ -236,10 +232,14 @@ class TestCreateAgent:
         mock_agent = MagicMock(name="LlmAgent")
         mock_llm_agent_cls = MagicMock(return_value=mock_agent)
 
-        with patch.dict("sys.modules", {"google": MagicMock(), "google.adk": MagicMock(), "google.adk.agents": MagicMock(LlmAgent=mock_llm_agent_cls)}):
+        with patch.dict("sys.modules", {
+            "google": MagicMock(),
+            "google.adk": MagicMock(),
+            "google.adk.agents": MagicMock(LlmAgent=mock_llm_agent_cls),
+        }):
             from zil.sdk.agent import create_agent
 
-            agent = create_agent(project_dir=zil_project)
+            create_agent(project_dir=zil_project)
 
             mock_llm_agent_cls.assert_called_once()
             call_kwargs = mock_llm_agent_cls.call_args[1]
@@ -253,6 +253,7 @@ class TestCreateAgent:
         with patch.dict("sys.modules", {"google.adk": None, "google.adk.agents": None}):
             # Need to reimport to pick up the patched modules
             import importlib
+
             import zil.sdk.agent as agent_mod
             importlib.reload(agent_mod)
 
@@ -262,7 +263,11 @@ class TestCreateAgent:
     def test_overrides(self, zil_project: Path) -> None:
         mock_llm_agent_cls = MagicMock()
 
-        with patch.dict("sys.modules", {"google": MagicMock(), "google.adk": MagicMock(), "google.adk.agents": MagicMock(LlmAgent=mock_llm_agent_cls)}):
+        with patch.dict("sys.modules", {
+            "google": MagicMock(),
+            "google.adk": MagicMock(),
+            "google.adk.agents": MagicMock(LlmAgent=mock_llm_agent_cls),
+        }):
             from zil.sdk.agent import create_agent
 
             create_agent(

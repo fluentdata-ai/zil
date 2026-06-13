@@ -77,7 +77,7 @@ class JiraIssueRef(BaseModel):
 
 
 class JiraWebhookPayload(BaseModel):
-    webhookEvent: str
+    webhookEvent: str  # noqa: N815 — field name fixed by Jira's webhook payload
     issue: JiraIssueRef
 
 

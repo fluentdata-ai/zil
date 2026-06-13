@@ -126,8 +126,8 @@ def _create_app(
 ) -> Any:
     """Build the FastAPI application from the project manifest."""
     try:
-        from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request, status
-        from fastapi.responses import JSONResponse, StreamingResponse
+        from fastapi import FastAPI, HTTPException, Query
+        from fastapi.responses import StreamingResponse
         from pydantic import BaseModel
     except ImportError:
         raise ImportError(
@@ -198,7 +198,9 @@ def _create_app(
         return {"status": "ok", "agent": agent_name, "version": agent_version}
 
     # ---- Session endpoints ------------------------------------------------
-    def _get_or_create_session(session_id: str | None = None, workspace: str | None = None) -> tuple[str, Any]:
+    def _get_or_create_session(
+        session_id: str | None = None, workspace: str | None = None
+    ) -> tuple[str, Any]:
         """Return (session_id, Session), creating one if needed."""
         sid = session_id or uuid.uuid4().hex
         if sid not in sessions:
@@ -581,19 +583,38 @@ def _register_a2a_endpoints(
         session = Session(wired, workspace=str(project) if project else None)
 
         async def event_stream():
-            yield f"data: {json.dumps({'id': task_id, 'status': {'state': 'working'}})}\n\n"
+            def _sse(payload: dict) -> str:
+                return f"data: {json.dumps(payload)}\n\n"
+
+            yield _sse({"id": task_id, "status": {"state": "working"}})
             text_parts_out = []
             try:
                 async for event in session.stream(message_text):
                     if event.type == "text" and event.text:
                         text_parts_out.append(event.text)
-                        yield f"data: {json.dumps({'id': task_id, 'status': {'state': 'working'}, 'artifact': {'parts': [{'type': 'text', 'text': event.text}]}})}\n\n"
+                        yield _sse({
+                            "id": task_id,
+                            "status": {"state": "working"},
+                            "artifact": {
+                                "parts": [{"type": "text", "text": event.text}]
+                            },
+                        })
                     elif event.type == "tool_call":
-                        yield f"data: {json.dumps({'id': task_id, 'status': {'state': 'working', 'message': 'Calling tool: ' + str(event.tool_name)}})}\n\n"
+                        yield _sse({
+                            "id": task_id,
+                            "status": {
+                                "state": "working",
+                                "message": f"Calling tool: {event.tool_name}",
+                            },
+                        })
             finally:
                 await session.close()
             full_text = "".join(text_parts_out)
-            yield f"data: {json.dumps({'id': task_id, 'status': {'state': 'completed'}, 'artifacts': [{'parts': [{'type': 'text', 'text': full_text}]}]})}\n\n"
+            yield _sse({
+                "id": task_id,
+                "status": {"state": "completed"},
+                "artifacts": [{"parts": [{"type": "text", "text": full_text}]}],
+            })
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -614,6 +635,15 @@ def _register_a2a_endpoints(
             if isinstance(p, dict) and p.get("kind", p.get("type")) == "text"
         ]
         return "\n".join(t for t in texts if t)
+
+    def _agent_message(text: str) -> dict:
+        """Build an A2A agent Message carrying *text* (used in failed status)."""
+        return {
+            "role": "agent",
+            "kind": "message",
+            "messageId": uuid.uuid4().hex,
+            "parts": [{"kind": "text", "text": text}],
+        }
 
     def _rpc_error(rpc_id, code: int, message: str):
         return JSONResponse(
@@ -662,19 +692,34 @@ def _register_a2a_endpoints(
                 response = await session.send(message_text)
             finally:
                 await session.close()
-            task = {
-                "id": task_id,
-                "contextId": context_id,
-                "status": {"state": "completed"},
-                "artifacts": [
-                    {
-                        "artifactId": uuid.uuid4().hex,
-                        "parts": [{"kind": "text", "text": response.text}],
-                    }
-                ],
-                "history": [],
-                "kind": "task",
-            }
+            errors = [e.text for e in response.events if e.type == "error" and e.text]
+            if errors:
+                # Surface agent/model failures as a failed task rather than a
+                # "completed" task with empty text (A2A TaskState.failed).
+                task = {
+                    "id": task_id,
+                    "contextId": context_id,
+                    "status": {
+                        "state": "failed",
+                        "message": _agent_message("; ".join(errors)),
+                    },
+                    "history": [],
+                    "kind": "task",
+                }
+            else:
+                task = {
+                    "id": task_id,
+                    "contextId": context_id,
+                    "status": {"state": "completed"},
+                    "artifacts": [
+                        {
+                            "artifactId": uuid.uuid4().hex,
+                            "parts": [{"kind": "text", "text": response.text}],
+                        }
+                    ],
+                    "history": [],
+                    "kind": "task",
+                }
             tasks[task_id] = task
             return JSONResponse(
                 content={"jsonrpc": "2.0", "id": rpc_id, "result": task}
@@ -699,9 +744,13 @@ def _register_a2a_endpoints(
                     "kind": "status-update",
                     "status": {"state": "working"}, "final": False,
                 })
+                error_text: str | None = None
+                first_chunk = True
                 try:
                     async for event in session.stream(message_text):
                         if event.type == "text" and event.text:
+                            # The first chunk establishes the artifact
+                            # (append=False); later chunks append to it.
                             yield _evt({
                                 "taskId": task_id, "contextId": context_id,
                                 "kind": "artifact-update",
@@ -709,15 +758,29 @@ def _register_a2a_endpoints(
                                     "artifactId": "msg",
                                     "parts": [{"kind": "text", "text": event.text}],
                                 },
-                                "append": True, "lastChunk": False,
+                                "append": not first_chunk, "lastChunk": False,
                             })
+                            first_chunk = False
+                        elif event.type == "error" and event.text:
+                            error_text = event.text
                 finally:
                     await session.close()
-                yield _evt({
-                    "taskId": task_id, "contextId": context_id,
-                    "kind": "status-update",
-                    "status": {"state": "completed"}, "final": True,
-                })
+                if error_text is not None:
+                    yield _evt({
+                        "taskId": task_id, "contextId": context_id,
+                        "kind": "status-update",
+                        "status": {
+                            "state": "failed",
+                            "message": _agent_message(error_text),
+                        },
+                        "final": True,
+                    })
+                else:
+                    yield _evt({
+                        "taskId": task_id, "contextId": context_id,
+                        "kind": "status-update",
+                        "status": {"state": "completed"}, "final": True,
+                    })
 
             return StreamingResponse(event_stream(), media_type="text/event-stream")
 

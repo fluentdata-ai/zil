@@ -11,16 +11,11 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from zil.packaging.signing import (
-    SignResult,
-    VerifyResult,
     _find_cosign,
     sign_archive,
     verify_archive,
 )
-
 
 # ---------------------------------------------------------------------------
 # _find_cosign

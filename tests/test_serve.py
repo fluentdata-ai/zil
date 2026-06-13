@@ -1,10 +1,6 @@
 """Tests for zil serve — REST endpoints, webhook dispatch, and A2A."""
 
 import json
-import os
-import sys
-import types
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -14,9 +10,9 @@ import yaml
 fastapi = pytest.importorskip("fastapi")
 httpx = pytest.importorskip("httpx")
 
-from fastapi.testclient import TestClient
+from fastapi.testclient import TestClient  # noqa: E402
 
-from zil.commands.serve import _create_app
+from zil.commands.serve import _create_app  # noqa: E402
 
 
 def _a2a_agent_card_cls():
@@ -478,6 +474,43 @@ class TestA2AJsonRpc:
         ).json()
         assert body["result"]["status"]["state"] == "completed"
 
+    def test_message_send_error_returns_failed_task(self, client):
+        """An agent error maps to a failed task with the error in status.message."""
+        body = self._rpc(
+            client,
+            "message/send",
+            {"message": {"parts": [{"kind": "text", "text": "__STUB_ERROR__"}]}},
+        ).json()
+        result = body["result"]
+        assert result["status"]["state"] == "failed"
+        # No artifacts on failure; the error rides on status.message.
+        assert "artifacts" not in result
+        msg = result["status"]["message"]
+        assert msg["role"] == "agent"
+        assert "stub error" in msg["parts"][0]["text"]
+
+    def test_message_stream_first_artifact_not_append(self, client):
+        """The first artifact-update establishes the artifact (append=false)."""
+        resp = self._rpc(
+            client,
+            "message/stream",
+            {"message": {"parts": [{"kind": "text", "text": "stream me"}]}},
+        )
+        # The first (and only) artifact chunk must not append.
+        assert '"append": false' in resp.text
+        assert '"append": true' not in resp.text
+
+    def test_message_stream_error_final_state_failed(self, client):
+        """A streamed agent error ends with a failed final status-update."""
+        resp = self._rpc(
+            client,
+            "message/stream",
+            {"message": {"parts": [{"kind": "text", "text": "__STUB_ERROR__"}]}},
+        )
+        assert '"state": "failed"' in resp.text
+        assert '"final": true' in resp.text
+        assert "stub error" in resp.text
+
 
 # ---------------------------------------------------------------------------
 # TestWebhooks
@@ -487,9 +520,10 @@ class TestA2AJsonRpc:
 class TestWebhooks:
     def test_webhook_endpoint_registered(self, webhook_client):
         """The jira webhook endpoint should be registered."""
+        payload = {"webhookEvent": "jira:issue_created", "issue": {"key": "TEST-1"}}
         resp = webhook_client.post(
             "/webhooks/jira",
-            content=json.dumps({"webhookEvent": "jira:issue_created", "issue": {"key": "TEST-1"}}).encode(),
+            content=json.dumps(payload).encode(),
             headers={"content-type": "application/json"},
         )
         assert resp.status_code == 202
@@ -513,6 +547,7 @@ class TestWebhooks:
 class TestCLI:
     def test_serve_command_exists(self):
         from click.testing import CliRunner
+
         from zil.cli import cli
 
         runner = CliRunner()
@@ -522,6 +557,7 @@ class TestCLI:
 
     def test_serve_help_shows_docker_flag(self):
         from click.testing import CliRunner
+
         from zil.cli import cli
 
         runner = CliRunner()
@@ -532,6 +568,7 @@ class TestCLI:
 
     def test_serve_no_manifest(self, tmp_path):
         from click.testing import CliRunner
+
         from zil.cli import cli
 
         runner = CliRunner()
@@ -541,6 +578,7 @@ class TestCLI:
     def test_serve_docker_no_docker_cli(self, stub_project):
         """--docker should fail gracefully if Docker is not installed."""
         from click.testing import CliRunner
+
         from zil.cli import cli
 
         runner = CliRunner()
@@ -553,12 +591,13 @@ class TestCLI:
     def test_serve_docker_calls_docker_serve(self, stub_project):
         """--docker should dispatch to docker_serve()."""
         from click.testing import CliRunner
+
         from zil.cli import cli
 
         runner = CliRunner()
         with patch("shutil.which", return_value="/usr/bin/docker"), \
              patch("zil.commands._docker.docker_serve") as mock_ds:
-            result = runner.invoke(
+            runner.invoke(
                 cli, ["serve", "--project-dir", str(stub_project), "--docker"]
             )
         mock_ds.assert_called_once()

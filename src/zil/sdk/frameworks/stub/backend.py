@@ -86,12 +86,21 @@ class StubBackend:
         session_id: str | None = None,
         workspace: str | Path | None = None,
     ) -> AsyncIterator[SessionEvent]:
-        """Yield a canned response — useful for testing Session without a real LLM."""
+        """Yield a canned response — useful for testing Session without a real LLM.
+
+        If the message contains the marker ``__STUB_ERROR__`` the stub emits an
+        ``error`` event (and no text), so callers can exercise failure paths
+        (e.g. A2A failed-task handling) without a real LLM.
+        """
         logger.info(
             "StubBackend.invoke() called (session=%s, message=%r)",
             session_id,
             message[:80],
         )
+        if "__STUB_ERROR__" in message:
+            yield SessionEvent(type="error", text="stub error: simulated failure")
+            yield SessionEvent(type="done")
+            return
         yield SessionEvent(type="text", text=f"[stub] Received: {message}")
         yield SessionEvent(
             type="done",

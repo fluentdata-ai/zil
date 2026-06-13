@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import MagicMock
 
-import pytest
-
 from zil.sdk.hitl import (
     HumanInputRequest,
     HumanInputResponse,
@@ -15,7 +13,6 @@ from zil.sdk.hitl import (
     _set_state,
     request_human_input,
 )
-
 
 # ---------------------------------------------------------------------------
 # State helpers
@@ -126,7 +123,7 @@ class TestRequestHumanInputFirstCall:
     def test_records_pending_request(self):
         ctx = {}
         req = HumanInputRequest(question="Approve plan?", options=["yes", "no"])
-        resp = asyncio.get_event_loop().run_until_complete(
+        asyncio.get_event_loop().run_until_complete(
             request_human_input(req, ctx)
         )
         assert "pending_human_request" in ctx

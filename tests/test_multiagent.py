@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from textwrap import dedent
 
-import pytest
 import yaml
 
 from zil.schema.loader import validate_project
-from zil.sdk.loader import load_project, AgentSpec
-
+from zil.sdk.loader import load_project
 
 # ---------------------------------------------------------------------------
 # Fixtures

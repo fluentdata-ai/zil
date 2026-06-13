@@ -439,7 +439,10 @@ class TestInitGuardrailsTemplate:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(
                 cli,
-                ["init", "test-guardrail-agent", "--llm", "gemini", "--non-interactive", "--skip-install"],
+                [
+                    "init", "test-guardrail-agent", "--llm", "gemini",
+                    "--non-interactive", "--skip-install",
+                ],
                 catch_exceptions=False,
             )
             assert result.exit_code == 0

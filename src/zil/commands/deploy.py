@@ -834,7 +834,7 @@ def deploy(
         framework = _manifest.get("spec", {}).get("runtime", {}).get("framework", "adk")
         from zil.sdk.frameworks import registry
         try:
-            backend = registry.get(framework)
+            registry.get(framework)
         except Exception as exc:
             console.print(f"[red]Error:[/red] {exc}")
             raise SystemExit(1)

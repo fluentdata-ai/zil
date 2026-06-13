@@ -274,7 +274,6 @@ class TestDeployOutputJson:
         assert "hitl_respond" not in parsed["endpoints"]
 
     def test_output_json_cloud_sql_instance_present(self, tmp_path):
-        import json
         import yaml
 
         manifest = {

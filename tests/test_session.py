@@ -1,9 +1,6 @@
 """Tests for zil.Session, SessionEvent, SessionResponse, and backend invoke()."""
 
 import asyncio
-import sys
-import types
-from pathlib import Path
 
 import pytest
 
@@ -11,7 +8,6 @@ import zil
 from zil.sdk.frameworks.base import AgentSpec
 from zil.sdk.frameworks.stub.backend import StubBackend, StubWiredAgent
 from zil.sdk.session import Session, SessionEvent, SessionResponse
-
 
 # ---------------------------------------------------------------------------
 # Helpers

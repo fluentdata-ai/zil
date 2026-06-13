@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -302,7 +301,10 @@ class TestCheckRuntimeDeps:
         manifest_path.write_text(yaml.dump(manifest))
 
         result = self._validate(zil_project)
-        passes = [c for c in result.checks if c.status == "pass" and "runtime.dependencies" in c.message]
+        passes = [
+            c for c in result.checks
+            if c.status == "pass" and "runtime.dependencies" in c.message
+        ]
         assert len(passes) == 1
         assert "git" in passes[0].message
         assert "nodejs" in passes[0].message

@@ -6,7 +6,6 @@ validation checks, audit checks, init scaffolding, and inspect display.
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -57,12 +56,18 @@ def _write_project(tmp_path: Path, manifest: dict, *, create_identity: bool = Tr
         identity.mkdir()
         (identity / "persona.md").write_text("# Persona")
         (identity / "instructions.md").write_text("# Instructions")
-        (identity / "guardrails.yaml").write_text(yaml.dump({"detection": {"prompt_injection": True}}))
+        (identity / "guardrails.yaml").write_text(
+            yaml.dump({"detection": {"prompt_injection": True}})
+        )
 
     adapters = project_dir / "adapters"
     adapters.mkdir()
-    (adapters / "llm.yaml").write_text(yaml.dump({"provider": "gemini", "model": "gemini-2.0-flash"}))
-    (adapters / "embed.yaml").write_text(yaml.dump({"provider": "gemini", "model": "text-embedding-004"}))
+    (adapters / "llm.yaml").write_text(
+        yaml.dump({"provider": "gemini", "model": "gemini-2.0-flash"})
+    )
+    (adapters / "embed.yaml").write_text(
+        yaml.dump({"provider": "gemini", "model": "text-embedding-004"})
+    )
 
     return project_dir
 
@@ -324,7 +329,10 @@ class TestValidateTools:
         )
         project_dir = _write_project(tmp_path, manifest)
         result = validate_project(project_dir)
-        env_warns = [c for c in result.checks if "REPO_PATH" in c.message and "not declared" in c.message]
+        env_warns = [
+            c for c in result.checks
+            if "REPO_PATH" in c.message and "not declared" in c.message
+        ]
         assert len(env_warns) == 0
 
 
@@ -422,7 +430,11 @@ class TestInitMcp:
     def test_init_with_filesystem_preset(self, tmp_path):
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(
-                cli, ["init", "fs-agent", "--non-interactive", "--skip-install", "--mcp", "filesystem"],
+                cli,
+                [
+                    "init", "fs-agent", "--non-interactive", "--skip-install",
+                    "--mcp", "filesystem",
+                ],
                 catch_exceptions=False,
             )
             assert result.exit_code == 0
@@ -443,7 +455,11 @@ class TestInitMcp:
     def test_init_git_dockerfile_has_apt_install(self, tmp_path):
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(
-                cli, ["init", "git-docker-agent", "--non-interactive", "--skip-install", "--mcp", "git"],
+                cli,
+                [
+                    "init", "git-docker-agent", "--non-interactive", "--skip-install",
+                    "--mcp", "git",
+                ],
                 catch_exceptions=False,
             )
             dockerfile = (Path("git-docker-agent") / "Dockerfile").read_text()

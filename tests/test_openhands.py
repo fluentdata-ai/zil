@@ -9,9 +9,8 @@ from __future__ import annotations
 import json
 import sys
 import types
-import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -535,7 +534,10 @@ class TestOpenHandsInitCLI:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(
                 cli,
-                ["init", "my-oh-agent", "--framework", "openhands", "--non-interactive", "--skip-install"],
+                [
+                    "init", "my-oh-agent", "--framework", "openhands",
+                    "--non-interactive", "--skip-install",
+                ],
                 catch_exceptions=False,
             )
             assert result.exit_code == 0
@@ -557,7 +559,10 @@ class TestOpenHandsInitCLI:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(
                 cli,
-                ["init", "my-oh-agent", "--framework", "openhands", "--non-interactive", "--skip-install"],
+                [
+                    "init", "my-oh-agent", "--framework", "openhands",
+                    "--non-interactive", "--skip-install",
+                ],
                 catch_exceptions=False,
             )
             assert result.exit_code == 0
@@ -575,7 +580,10 @@ class TestOpenHandsInitCLI:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(
                 cli,
-                ["init", "my-oh-agent", "--framework", "openhands", "--non-interactive", "--skip-install"],
+                [
+                    "init", "my-oh-agent", "--framework", "openhands",
+                    "--non-interactive", "--skip-install",
+                ],
                 catch_exceptions=False,
             )
             assert result.exit_code == 0

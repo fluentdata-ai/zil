@@ -116,7 +116,6 @@ def grep_files(pattern: str, path: str = ".", include: str = "") -> dict:
 
     try:
         target = _resolve_safe(path)
-        cmd = ["grep", "-rEn", "--include=*.ts,*.js,*.py,*.json,*.md,*.yaml,*.yml" if not include else f"--include={include}", pattern, str(target)]
         if include:
             cmd = ["grep", "-rEn", f"--include={include}", pattern, str(target)]
         else:
@@ -131,7 +130,7 @@ def grep_files(pattern: str, path: str = ".", include: str = "") -> dict:
         workspace = _workspace_ctx.get()
         lines = result.stdout.splitlines()
         # Strip absolute workspace prefix from paths for readability
-        matches = [l.replace(str(workspace) + "/", "") for l in lines[:100]]
+        matches = [line.replace(str(workspace) + "/", "") for line in lines[:100]]
         return {
             "status": "ok",
             "matches": matches,
