@@ -1,0 +1,8 @@
+{
+  "agents": [
+    {
+      "name": "weather-agent",
+      "url": "http://localhost:8001"
+    }
+  ]
+}

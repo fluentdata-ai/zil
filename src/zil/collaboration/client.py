@@ -157,9 +157,9 @@ class A2APeerClient:
     def _base_url(self) -> str:
         resolver = self._resolver
         if resolver is None:
-            from zil.collaboration.discovery import RegistryResolver
+            from zil.collaboration.discovery import build_resolver
 
-            resolver = RegistryResolver()
+            resolver = build_resolver()
         return resolver.resolve_url(self._peer)
 
     async def _build_a2a_client(self, http: Any, *, streaming: bool) -> Any:

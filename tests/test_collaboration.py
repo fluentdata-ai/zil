@@ -16,8 +16,10 @@ from zil.collaboration.contract import (
     PeerRef,
 )
 from zil.collaboration.discovery import (
+    HttpRegistryResolver,
     RegistryResolver,
     StaticResolver,
+    build_resolver,
     interpolate_env,
 )
 from zil.schema.loader import (
@@ -172,6 +174,152 @@ class TestRegistryResolver:
         assert captured["url"] == "https://billing"
         assert card.skill_ids() == ["refund"]
         assert card.url == "https://billing"
+
+
+# ---------------------------------------------------------------------------
+# Discovery — HttpRegistryResolver (remote registry of record, RFC-007)
+# ---------------------------------------------------------------------------
+
+
+class TestHttpRegistryResolver:
+    def test_resolve_url_calls_registry_endpoint(self):
+        captured = {}
+
+        def fake_registry(resolve_url):
+            captured["url"] = resolve_url
+            return {"name": "billing", "url": "https://billing.run.app"}
+
+        r = HttpRegistryResolver(
+            "https://registry.example/api/v1/registry",
+            registry_fetcher=fake_registry,
+        )
+        url = r.resolve_url(PeerRef(name="b", ref="zil://fleet/billing"))
+        assert url == "https://billing.run.app"
+        assert captured["url"] == (
+            "https://registry.example/api/v1/registry/agents/billing"
+        )
+
+    def test_registry_url_from_env_is_interpolated(self):
+        r = HttpRegistryResolver(
+            env={"ZIL_FLEET_REGISTRY_URL": "https://reg/${STAGE}", "STAGE": "prod"},
+            registry_fetcher=lambda u: {"url": u},
+        )
+        # The interpolated registry base is used to build the resolve URL.
+        url = r.resolve_url(PeerRef(name="b", ref="zil://fleet/x"))
+        assert url == "https://reg/prod/agents/x"
+
+    def test_resolve_prefers_embedded_card(self):
+        def fake_registry(_url):
+            return {
+                "url": "https://billing.run.app",
+                "card": {"name": "billing", "url": "", "version": "1",
+                         "skills": [{"id": "refund", "name": "Refund", "tags": []}]},
+            }
+
+        def card_fetcher(_url):  # pragma: no cover — must not be called
+            raise AssertionError("should not fetch well-known card when embedded")
+
+        r = HttpRegistryResolver(
+            "https://reg", registry_fetcher=fake_registry, card_fetcher=card_fetcher
+        )
+        card = r.resolve(PeerRef(name="b", ref="zil://fleet/billing"))
+        assert card.skill_ids() == ["refund"]
+        assert card.url == "https://billing.run.app"
+
+    def test_resolve_falls_back_to_well_known_card(self):
+        def fake_registry(_url):
+            return {"url": "https://billing.run.app"}
+
+        def card_fetcher(url):
+            assert url == "https://billing.run.app"
+            return {"name": "billing", "url": url, "version": "1",
+                    "skills": [{"id": "lookup", "name": "Lookup", "tags": []}]}
+
+        r = HttpRegistryResolver(
+            "https://reg", registry_fetcher=fake_registry, card_fetcher=card_fetcher
+        )
+        card = r.resolve(PeerRef(name="b", ref="zil://fleet/billing"))
+        assert card.skill_ids() == ["lookup"]
+
+    def test_plain_url_peer_is_delegated(self):
+        r = HttpRegistryResolver(
+            "https://reg",
+            env={"U": "https://x.run.app"},
+            registry_fetcher=lambda u: {"url": "unused"},
+        )
+        assert r.resolve_url(PeerRef(name="p", url="${U}")) == "https://x.run.app"
+
+    def test_no_registry_configured_raises(self):
+        r = HttpRegistryResolver(registry_fetcher=lambda u: {"url": "x"}, env={})
+        with pytest.raises(ValueError, match="no .*registry is configured"):
+            r.resolve_url(PeerRef(name="b", ref="zil://fleet/billing"))
+
+    def test_bad_scheme_raises(self):
+        r = HttpRegistryResolver("https://reg", registry_fetcher=lambda u: {"url": "x"})
+        with pytest.raises(ValueError, match="must use the"):
+            r.resolve_url(PeerRef(name="b", ref="http://billing"))
+
+    def test_unknown_ref_raises(self):
+        r = HttpRegistryResolver("https://reg", registry_fetcher=lambda u: {})
+        with pytest.raises(ValueError, match="not found in the registry"):
+            r.resolve_url(PeerRef(name="b", ref="zil://fleet/missing"))
+
+    def test_default_fetcher_attaches_bearer_token(self, monkeypatch):
+        captured = {}
+
+        def fake_get(url, headers=None, timeout=None):
+            captured["headers"] = headers
+
+            class _Resp:
+                def raise_for_status(self):
+                    pass
+
+                def json(self):
+                    return {"url": "https://billing.run.app"}
+
+            return _Resp()
+
+        import httpx
+
+        monkeypatch.setattr(httpx, "get", fake_get)
+        r = HttpRegistryResolver(
+            "https://reg",
+            env={"ZIL_FLEET_REGISTRY_URL": "https://reg", "ZIL_FLEET_REGISTRY_TOKEN": "secret"},
+        )
+        r.resolve_url(PeerRef(name="b", ref="zil://fleet/billing"))
+        assert captured["headers"]["Authorization"] == "Bearer secret"
+
+    def test_default_fetcher_no_token_no_auth_header(self, monkeypatch):
+        captured = {}
+
+        def fake_get(url, headers=None, timeout=None):
+            captured["headers"] = headers
+
+            class _Resp:
+                def raise_for_status(self):
+                    pass
+
+                def json(self):
+                    return {"url": "https://billing.run.app"}
+
+            return _Resp()
+
+        import httpx
+
+        monkeypatch.setattr(httpx, "get", fake_get)
+        r = HttpRegistryResolver("https://reg", env={})
+        r.resolve_url(PeerRef(name="b", ref="zil://fleet/billing"))
+        assert "Authorization" not in captured["headers"]
+
+
+class TestBuildResolver:
+    def test_http_resolver_when_url_set(self):
+        r = build_resolver(env={"ZIL_FLEET_REGISTRY_URL": "https://reg"})
+        assert isinstance(r, HttpRegistryResolver)
+
+    def test_registry_resolver_otherwise(self):
+        r = build_resolver(env={})
+        assert isinstance(r, RegistryResolver)
 
 
 # ---------------------------------------------------------------------------

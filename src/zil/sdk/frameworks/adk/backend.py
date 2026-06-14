@@ -266,7 +266,7 @@ def _build_remote_agents(spec: AgentSpec) -> list[Any]:
     from google.adk.tools.agent_tool import AgentTool
 
     from zil.collaboration.auth import NoneAuthenticator, build_authenticator
-    from zil.collaboration.discovery import RegistryResolver
+    from zil.collaboration.discovery import build_resolver
     from zil.collaboration.http import build_peer_http_client
 
     try:
@@ -275,9 +275,11 @@ def _build_remote_agents(spec: AgentSpec) -> list[Any]:
         AGENT_CARD_WELL_KNOWN_PATH = "/.well-known/agent-card.json"  # noqa: N806
 
     caller = spec.name or ""
-    # RegistryResolver is a superset of StaticResolver: it handles plain ``url:``
-    # peers and ``ref: zil://fleet/<name>`` registry discovery (RFC-005 §9).
-    resolver = RegistryResolver()
+    # build_resolver selects the discovery seam from the environment: an HTTP
+    # registry of record (ZIL_FLEET_REGISTRY_URL) in production, else the
+    # in-process RegistryResolver. Both handle plain ``url:`` peers and
+    # ``ref: zil://fleet/<name>`` identically (RFC-005 §9).
+    resolver = build_resolver()
     agent_tools: list[Any] = []
     for peer in collaborators:
         try:

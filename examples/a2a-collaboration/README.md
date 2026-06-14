@@ -121,7 +121,16 @@ Replace `auth: none` in `trip-planner/manifest.yaml` with one of:
 - **`gcp-id-token`** — audience-scoped Google ID token; pairs with a
   private-by-default Cloud Run deployment of the weather-agent.
 
+## Registry mode (dynamic discovery)
+
+This example resolves the peer from a hard-coded URL (`url: ${WEATHER_AGENT_URL}`).
+For a fleet where callers shouldn't know every peer's address, declare peers by
+logical name (`ref: zil://fleet/weather-agent`) and resolve them through a
+registry. See [`a2a-registry`](../a2a-registry) for a runnable reference registry
+service and the `HttpRegistryResolver` it pairs with.
+
 ## Learn more
 
 - [Multi-agent topology & A2A (RFC-005)](../../backlog/ZIL-RFC-005-multi-agent-topology-and-a2a.md)
+- [`a2a-registry` example](../a2a-registry) — name-based discovery via a registry
 - [Documentation](https://getzil.dev/docs)

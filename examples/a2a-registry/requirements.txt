@@ -1,0 +1,3 @@
+# Reference A2A registry service. Pulls in FastAPI + uvicorn + httpx via the
+# zil-ai[serve] extra.
+zil-ai[serve]

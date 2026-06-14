@@ -26,8 +26,10 @@ from zil.collaboration.contract import (
     RemoteAgent,
 )
 from zil.collaboration.discovery import (
+    HttpRegistryResolver,
     RegistryResolver,
     StaticResolver,
+    build_resolver,
     interpolate_env,
 )
 from zil.collaboration.topology import (
@@ -47,6 +49,8 @@ __all__ = [
     "RemoteAgent",
     "StaticResolver",
     "RegistryResolver",
+    "HttpRegistryResolver",
+    "build_resolver",
     "interpolate_env",
     "build_authenticator",
     "NoneAuthenticator",

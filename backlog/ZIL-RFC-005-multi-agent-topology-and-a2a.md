@@ -249,12 +249,13 @@ This is a small, self-contained change that unblocks meaningful discovery — a 
 
 ## 9. Discovery & resolution
 
-A `PeerResolver` maps `PeerRef → AgentCard`. Two implementations, sequenced:
+A `PeerResolver` maps `PeerRef → AgentCard`. Implementations, sequenced:
 
 - **`StaticResolver` (Phase 1).** Resolve from `PeerRef.url` (with env-var interpolation, e.g. `${BILLING_AGENT_URL}`), then fetch the card. Covers the common case (you know your peers' URLs) with zero new infrastructure.
-- **`RegistryResolver` (Phase 4, optional).** Resolve `PeerRef.ref` (e.g. `zil://fleet/billing-agent`) via the RFC-007 agent registry-of-record → URL + card. Gated on RFC-007; do not build a bespoke registry here (principle: no new registry).
+- **`RegistryResolver` (Phase 4).** Resolve `PeerRef.ref` (e.g. `zil://fleet/billing-agent`) via an in-process `name → url` mapping (injected or `ZIL_FLEET_REGISTRY`). Good for tests and small static fleets.
+- **`HttpRegistryResolver` (Phase 4, shipped).** Resolve `PeerRef.ref` against a remote *registry of record* over HTTP — `GET {ZIL_FLEET_REGISTRY_URL}/agents/<name>` → URL + (optional) card. This is the production seam; the registry-of-record itself is **RFC-007** (do not build a bespoke registry in core — principle: no new registry). See `examples/a2a-registry` for the contract + a reference service.
 
-The resolver is the single seam that knows *where* peers live, so swapping static → registry changes nothing else.
+`build_resolver(env)` selects `HttpRegistryResolver` when `ZIL_FLEET_REGISTRY_URL` is set, else `RegistryResolver`. The resolver is the single seam that knows *where* peers live, so swapping static → registry changes nothing else.
 
 ---
 
