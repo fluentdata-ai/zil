@@ -7,6 +7,7 @@ export default {
   packaging: "Packaging & Registry",
   tools: "MCP Tools",
   "multi-agent": "Multi-Agent & HITL",
+  collaboration: "A2A Collaboration",
   skills: "Skills",
   "runtime-deps": "Runtime Dependencies",
   signing: "Archive Signing",

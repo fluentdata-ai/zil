@@ -5,6 +5,23 @@ All notable changes to the `zil-ai` package will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.21] — 2026-06-16
+
+### Added
+
+- **A2A registry discovery (RFC-007)** — resolve `ref: zil://fleet/<name>` collaborators by logical name. New `HttpRegistryResolver` queries a registry of record over HTTP (base URL from `ZIL_FLEET_REGISTRY_URL`, optional `ZIL_FLEET_REGISTRY_TOKEN` bearer), and `build_resolver()` selects it automatically — falling back to the in-process `RegistryResolver` (`ZIL_FLEET_REGISTRY` mapping) otherwise. The same manifest resolves peers locally and in production with no change.
+- **a2a-registry reference example** — a minimal registry-of-record service implementing the `GET /agents` and `GET /agents/{name}` contract.
+- **A2A Collaboration docs** — a dedicated documentation page covering the caller/callee roles, collaborator declaration, discovery modes, inter-agent auth, context transfer, the native `A2APeerClient`, topology, validation, and fleet deployment.
+
+### Changed
+
+- **Cold-start-tolerant peer timeouts** — `build_peer_http_client` now defaults to generous connect/read timeouts (`DEFAULT_PEER_TIMEOUT`) so a serverless peer scaled to zero is awaited during Agent Card resolution rather than failing with a spurious 503. Override per-call as needed.
+
+### Fixed
+
+- **ADK node-name normalization** — hyphenated fleet names (e.g. `weather-agent`) are normalized to valid Python identifiers before being passed to ADK's `RemoteA2aAgent`, which previously rejected them. The original peer name is preserved for identity, auth, and the tool description.
+- **Deploy env-var forwarding** — `zil deploy` now forwards platform-injected infrastructure variables (e.g. `ZIL_FLEET_REGISTRY_URL` / `ZIL_FLEET_REGISTRY_TOKEN`) from the `--env-file` to the deployed container even when they are not declared in the manifest's `spec.env`.
+
 ## [0.1.20] — 2026-06-02
 
 ### Added

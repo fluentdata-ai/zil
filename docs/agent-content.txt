@@ -2,7 +2,7 @@
 # https://getzil.dev/docs
 # Source: https://github.com/fluentdata-co/zil
 # Package: pip install zil-ai
-# Version: 0.1.20
+# Version: 0.1.21
 
 ## Overview
 
@@ -675,6 +675,75 @@ ADK:       wired through session/memory hooks with per-session dedup of marked
 
 Scope→Mem0 key mapping: SESSION→run_id, USER→user_id, AGENT→agent_id (namespace).
 AGENT scope intentionally uses agent_id only.
+
+---
+
+## A2A Collaboration
+
+Zil agents call other agents over A2A (JSON-RPC message/send). A caller declares
+peers in spec.collaborators; a callee advertises capabilities as skills on its
+Agent Card. No central broker — the caller talks directly to the peer. Crosses a
+trust boundary: per-call auth + a per-peer skill allowlist (least authority).
+
+### Declaring collaborators (caller)
+
+    spec:
+      collaborators:
+        - name: weather-agent              # handle; match peer metadata.name
+          ref: zil://fleet/weather-agent   # registry discovery (or use url:)
+          skills: [get-forecast]           # allowlist; omit to allow all
+          auth: gcp-id-token               # none | bearer | gcp-id-token
+          context_transfer:
+            send: message_only             # message_only | session_summary | none
+            receive: artifacts             # artifacts | artifacts_and_state
+            redact: [user_email]
+
+A collaborator declares exactly ONE of url or ref. Self-reference fails validation.
+
+### Discovery modes
+
+    static            url: https://...  or  url: ${ENV}     → StaticResolver
+    in-process        ref: zil://fleet/<name>               → RegistryResolver
+    registry-of-record ref: zil://fleet/<name>              → HttpRegistryResolver
+
+build_resolver() selects HttpRegistryResolver when ZIL_FLEET_REGISTRY_URL is set,
+otherwise RegistryResolver. Same manifest resolves locally and in production.
+
+Discovery env vars:
+    ZIL_FLEET_REGISTRY_URL    base URL of registry of record (selects HTTP mode)
+    ZIL_FLEET_REGISTRY_TOKEN  bearer token for a protected registry
+    ZIL_FLEET_REGISTRY        in-process mapping: "name=url,name2=url2"
+
+Registry-of-record HTTP contract:
+    GET {registry}/agents/{name}  → { name, url, card? }
+    GET {registry}/agents         → { agents: [ { name, url, skills }, ... ] }
+
+### Inter-agent auth
+
+Every call asserts caller identity via X-Zil-Caller-Agent. auth mode adds creds:
+    gcp-id-token (default)  Google ID token scoped to peer URL (audience)
+    bearer                  static token from ZIL_A2A_TOKEN_<PEER> or ZIL_A2A_TOKEN
+    none                    identity header only (dev; emits validate warning)
+
+### Native client (framework-neutral)
+
+    from zil.collaboration import A2APeerClient, PeerRef, SkillNotAllowedError
+    client = A2APeerClient(PeerRef(name="weather-agent", url=..., skills=["get-forecast"]),
+                           caller="trip-planner")
+    result = await client.call("get-forecast", "weather in Lisbon?")  # PeerCallResult
+    print(result.text())
+    # client.stream(skill, message) yields incremental PeerStreamEvent
+    # disallowed skills raise SkillNotAllowedError before any network call
+
+### Tooling
+
+    zil topology              render collaboration graph; non-zero exit on cycles
+    zil validate              structural checks on spec.collaborators
+    zil validate --online     also fetch peer Agent Cards; fail on skill mismatch
+
+ADK adapter wires each peer as a RemoteA2aAgent (AgentTool). Hyphenated names
+(weather-agent) are normalized to valid identifiers (weather_agent) for the node;
+the original name is preserved for identity, auth, and tool description.
 
 ---
 

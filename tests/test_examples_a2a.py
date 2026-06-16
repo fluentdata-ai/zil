@@ -76,7 +76,10 @@ class TestTripPlannerCollaborators:
         assert isinstance(peer, PeerRef)
         # Handle matches the callee's metadata.name so `zil topology` links them.
         assert peer.name == "weather-agent"
-        assert peer.url == "${WEATHER_AGENT_URL}"
+        # Registry discovery (RFC-007): the peer is resolved by logical name via
+        # `ref: zil://fleet/<name>`, not a hard-coded url.
+        assert peer.url is None
+        assert peer.ref == "zil://fleet/weather-agent"
         assert peer.skills == ["get-forecast"]
         assert peer.auth == "none"
 

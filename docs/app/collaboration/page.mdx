@@ -1,0 +1,272 @@
+# A2A Collaboration
+
+Zil agents can call **other agents** over [A2A](https://google.github.io/A2A/) (Agent-to-Agent). A *caller* declares the peers it may invoke in `spec.collaborators`; a *callee* advertises its capabilities as **skills** on its Agent Card. There is **no central broker** — the caller talks directly to the peer over A2A (JSON-RPC `message/send`).
+
+This is distinct from [Multi-Agent & HITL](/multi-agent), where a root orchestrator delegates to **in-process** sub-agents. A2A collaboration crosses a **trust boundary**: peers are independently deployed services, reached over the network, authenticated per call, and constrained by a per-peer skill allowlist.
+
+```
+trip-planner  ──A2A (JSON-RPC message/send)──▶  weather-agent
+   caller                                          callee
+   spec.collaborators:                          spec.skills:
+     - name: weather-agent                         get-forecast  (advertised on Agent Card)
+       skills: [get-forecast]
+```
+
+---
+
+## Two roles
+
+| Role | Manifest | What it does |
+|------|----------|--------------|
+| **Callee (peer)** | `spec.skills` | Advertises skills on its Agent Card at `/.well-known/agent-card.json`. Any A2A client can introspect and invoke them. |
+| **Caller** | `spec.collaborators` | Declares the peers it may call. Each peer becomes a callable tool (ADK adapter) and is reachable via the native `A2APeerClient`. |
+
+A single agent can be both — advertise its own skills *and* declare collaborators.
+
+---
+
+## Declaring collaborators (caller side)
+
+Add a `spec.collaborators` list to the caller's `manifest.yaml`:
+
+```yaml
+spec:
+  collaborators:
+    - name: weather-agent          # handle; match the peer's metadata.name for `zil topology`
+      ref: zil://fleet/weather-agent   # registry discovery (or use `url:` — see below)
+      skills:
+        - get-forecast             # allowlist: only these peer skills may be invoked
+      auth: gcp-id-token           # none | bearer | gcp-id-token
+      context_transfer:
+        send: message_only
+        receive: artifacts
+        redact:
+          - user_email
+```
+
+### Collaborator fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Peer handle. Match the peer's `metadata.name` so `zil topology` links them. |
+| `url` | string | One of `url`/`ref` | **Static discovery** — explicit base URL. Supports `${ENV}` interpolation (e.g. `${WEATHER_AGENT_URL}`). |
+| `ref` | string | One of `url`/`ref` | **Registry discovery** — `zil://fleet/<name>` resolved by logical name (see below). |
+| `skills` | string[] | No | Allowlist of peer skill ids. Omit to allow all. Enforced **before** any network call. |
+| `auth` | string | No | Inter-agent auth mode. Default `gcp-id-token`. One of `none`, `bearer`, `gcp-id-token`. |
+| `context_transfer` | object | No | What may cross the trust boundary (see [Context transfer](#context-transfer)). |
+
+> A collaborator must declare **exactly one** of `url` or `ref`. Declaring an agent as its own collaborator is a topology self-reference and fails validation.
+
+---
+
+## Advertising skills (callee side)
+
+The callee declares `spec.skills`, pointing at a `skills/` directory. Each skill's id is its directory name, and all are published on the A2A Agent Card:
+
+```yaml
+metadata:
+  name: weather-agent
+spec:
+  skills: ./skills          # each subdirectory is an advertised skill id
+```
+
+Confirm what a running peer advertises:
+
+```bash
+curl -s http://localhost:8001/.well-known/agent-card.json | jq '.skills[].id'
+# "get-forecast"
+```
+
+See [Skills](/skills) for the skill directory format.
+
+---
+
+## Discovery modes
+
+A peer is reached either by an explicit address (**static**) or by a **logical name** resolved through a registry. The logical-name form lets callers avoid hard-coding each peer's address, so the *same manifest* works locally and in production with no change.
+
+| Mode | Declaration | Resolver | When |
+|------|-------------|----------|------|
+| **Static** | `url: https://...` or `url: ${ENV}` | `StaticResolver` | Fixed, known address. |
+| **In-process registry** | `ref: zil://fleet/<name>` | `RegistryResolver` | Local dev / small fleets. Mapping from `ZIL_FLEET_REGISTRY`. |
+| **Registry of record** | `ref: zil://fleet/<name>` | `HttpRegistryResolver` | Production. Resolves over HTTP via `ZIL_FLEET_REGISTRY_URL`. |
+
+`build_resolver()` selects the implementation from the environment: `HttpRegistryResolver` when `ZIL_FLEET_REGISTRY_URL` is set, otherwise `RegistryResolver`. Either way, `ref: zil://fleet/<name>` resolves identically.
+
+### Discovery environment variables
+
+| Variable | Used by | Description |
+|----------|---------|-------------|
+| `ZIL_FLEET_REGISTRY_URL` | `HttpRegistryResolver` | Base URL of the registry of record. Its presence selects HTTP discovery. |
+| `ZIL_FLEET_REGISTRY_TOKEN` | `HttpRegistryResolver` | Bearer token sent to a protected registry. |
+| `ZIL_FLEET_REGISTRY` | `RegistryResolver` | In-process mapping: comma-separated `name=url` pairs. |
+
+```bash
+# Local: in-process mapping (no registry service needed)
+export ZIL_FLEET_REGISTRY="weather-agent=http://localhost:8001"
+```
+
+### Registry of record HTTP contract
+
+A registry of record is a small HTTP service exposing workspace-scoped, name-based lookups:
+
+```
+GET {registry}/agents/{name}   → { "name": "...", "url": "https://...", "card": {...}? }
+GET {registry}/agents          → { "agents": [ { "name", "url", "skills" }, ... ] }
+```
+
+When `ZIL_FLEET_REGISTRY_TOKEN` is set, the resolver attaches it as `Authorization: Bearer <token>`. The reference [`a2a-registry`](https://github.com/fluentdata-co/zil/tree/main/examples/a2a-registry) example implements this contract. On the Zil platform, the registry of record is provided for you and `ZIL_FLEET_REGISTRY_URL` (+ token) are injected at deploy time.
+
+---
+
+## Inter-agent authentication
+
+Every outbound call asserts caller identity via the `X-Zil-Caller-Agent` header. The `auth` mode controls what credentials (if any) are additionally attached.
+
+| Mode | Credentials | Notes |
+|------|-------------|-------|
+| `gcp-id-token` (default) | Google-signed ID token scoped to the peer URL (audience) | Service-to-service identity; pairs with private-by-default Cloud Run. Requires `google-auth` (ships with `[adk]`). |
+| `bearer` | Static token from an env var | Cross-cloud / non-GCP peers. |
+| `none` | None (identity header only) | Dev only. Emits a `zil validate` **warning**. |
+
+### Bearer token lookup
+
+`bearer` mode reads the first set of these env vars (most specific first):
+
+```
+ZIL_A2A_TOKEN_<PEER_NAME>   # e.g. weather-agent → ZIL_A2A_TOKEN_WEATHER_AGENT
+ZIL_A2A_TOKEN               # shared fallback for all bearer peers
+```
+
+---
+
+## Context transfer
+
+`context_transfer` declares what may cross the trust boundary on each peer call:
+
+| Field | Values | Default | Description |
+|-------|--------|---------|-------------|
+| `send` | `message_only` \| `session_summary` \| `none` | `message_only` | What the caller sends to the peer. |
+| `receive` | `artifacts` \| `artifacts_and_state` | `artifacts` | What the caller accepts back. |
+| `redact` | string[] | `[]` | Keys to strip before sending. |
+
+---
+
+## How peers are wired (ADK adapter)
+
+When `zil.create_agent()` detects `spec.collaborators`, the ADK backend:
+
+1. Resolves each peer's base URL via `build_resolver()` (static or registry).
+2. Builds an auth-aware, cold-start-tolerant httpx client (caller identity + per-mode auth).
+3. Wraps each peer as an ADK `RemoteA2aAgent` pointed at its Agent Card, exposed to the LLM as an `AgentTool`.
+4. Surfaces the per-peer `skills` allowlist in the tool description so the model delegates only matching requests.
+
+Peers whose URL can't be resolved (e.g. an unset env var) are skipped with a warning rather than failing startup. The peer's logical name is normalized to a valid identifier for the ADK node (`weather-agent` → `weather_agent`), while the original name is preserved for identity, auth, and the tool description.
+
+```python
+import zil
+
+# spec.collaborators peers are wired as AgentTools automatically.
+root_agent = zil.create_agent(tools=[my_custom_tool])
+```
+
+---
+
+## Native client (framework-neutral)
+
+`A2APeerClient` calls a peer over A2A from **any** backend — no agent framework required. It enforces the skill allowlist *before* any network request, resolves the peer's Agent Card, sends the message, and returns parsed artifacts.
+
+```python
+import asyncio
+from zil.collaboration import A2APeerClient, PeerRef, SkillNotAllowedError
+
+async def main():
+    weather = PeerRef(
+        name="weather-agent",
+        url="http://localhost:8001",      # or ref="zil://fleet/weather-agent"
+        skills=["get-forecast"],          # allowlist
+        auth="none",
+    )
+    client = A2APeerClient(weather, caller="trip-planner")
+
+    # Allowed call → fetches Agent Card, sends message/send, parses artifacts.
+    result = await client.call("get-forecast", "Weather in Lisbon this weekend?")
+    print(result.status, result.task_id)
+    print(result.text())
+
+    # Least authority — a skill outside the allowlist never hits the network.
+    try:
+        await client.call("delete-data", "drop everything")
+    except SkillNotAllowedError as exc:
+        print(f"blocked: {exc}")
+
+asyncio.run(main())
+```
+
+### `A2APeerClient`
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `call(skill, message, *, context_id=None)` | `PeerCallResult` | Send a message; aggregate the result. Raises `SkillNotAllowedError` before any network call if `skill` is disallowed. |
+| `stream(skill, message, *, context_id=None)` | async iterator of `PeerStreamEvent` | Same, but yields incremental events. |
+
+`PeerCallResult` exposes `task_id`, `context_id`, `status`, `artifacts`, `messages`, and `.text()` (concatenated artifact + message text).
+
+---
+
+## Inspect the topology
+
+`zil topology` renders the declared collaboration graph and exits non-zero if any cycles are detected:
+
+```bash
+zil topology --dir examples/a2a-collaboration
+# trip-planner → weather-agent
+```
+
+---
+
+## Validation
+
+`zil validate` checks `spec.collaborators` structurally (offline):
+
+```
+✓ spec.collaborators — 1 peer(s): weather-agent
+```
+
+| Check | Description |
+|-------|-------------|
+| **One of `url`/`ref`** | Each collaborator declares exactly one discovery mode. |
+| **No self-reference** | An agent may not list itself as a collaborator. |
+| **Auth mode** | `auth` is one of `gcp-id-token`, `bearer`, `none`. `none` emits a warning. |
+| **Unique names** | No duplicate collaborator handles. |
+
+With `--online`, validation fetches each peer's Agent Card and fails if a declared skill is not advertised by the peer (a guaranteed runtime mismatch):
+
+```bash
+ZIL_FLEET_REGISTRY="weather-agent=http://localhost:8001" \
+    zil validate --project-dir examples/a2a-collaboration/trip-planner --online
+```
+
+---
+
+## Deploying to a fleet
+
+When you deploy an agent that declares `ref:` collaborators to the Zil platform, the registry of record is wired automatically:
+
+1. The platform injects `ZIL_FLEET_REGISTRY_URL` (+ `ZIL_FLEET_REGISTRY_TOKEN`) into the deployed container.
+2. `build_resolver()` selects `HttpRegistryResolver`.
+3. `ref: zil://fleet/<name>` peers resolve by logical name against the workspace-scoped registry — no code or manifest change between local and production.
+
+For private-by-default peers, use `auth: gcp-id-token` so the caller mints an audience-scoped ID token for the peer's Cloud Run URL.
+
+---
+
+## Example
+
+The [`examples/a2a-collaboration`](https://github.com/fluentdata-co/zil/tree/main/examples/a2a-collaboration) directory contains a complete, runnable two-agent example:
+
+- **`weather-agent/`** — the callee. Advertises a `get-forecast` skill.
+- **`trip-planner/`** — the caller. Declares the weather agent in `spec.collaborators` and delegates weather questions over A2A.
+- **`call_peer.py`** — the framework-neutral `A2APeerClient` in action.
+
+A reference registry-of-record service lives in [`examples/a2a-registry`](https://github.com/fluentdata-co/zil/tree/main/examples/a2a-registry).

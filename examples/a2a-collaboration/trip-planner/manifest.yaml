@@ -34,9 +34,12 @@ spec:
   collaborators:
     # The handle matches the peer's metadata.name so `zil topology` links them.
     - name: weather-agent
-      # Static discovery: explicit URL (use `ref:` for registry discovery).
-      # Defaults to the local weather-agent started with `zil serve --port 8001`.
-      url: ${WEATHER_AGENT_URL}
+      # Registry discovery (ZIL-RFC-007): resolve the peer by name against the
+      # fleet registry of record. In production zil-core injects
+      # `ZIL_FLEET_REGISTRY_URL` (+ token) at deploy time, so this resolves with
+      # no code change. For a purely-local run without a registry, swap this for
+      # `url: ${WEATHER_AGENT_URL}` (static discovery).
+      ref: zil://fleet/weather-agent
       # Only this peer skill may be invoked. The id matches the directory name
       # under the weather-agent's ./skills (advertised on its Agent Card).
       skills:
@@ -58,6 +61,9 @@ spec:
       required: true
       secret: true
     - name: WEATHER_AGENT_URL
-      description: Base URL of the weather-agent A2A peer (e.g. http://localhost:8001)
-      required: true
+      description: >
+        Optional. Only used if the weather-agent collaborator is switched back
+        to static `url:` discovery. With registry discovery (the default) the
+        peer is resolved by name via ZIL_FLEET_REGISTRY_URL.
+      required: false
       default: http://localhost:8001

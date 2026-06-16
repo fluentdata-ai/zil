@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -248,6 +249,20 @@ def _build_sub_agents(
     return agent_tools
 
 
+def _to_node_name(name: str) -> str:
+    """Normalize a fleet/peer name into a valid Python identifier for ADK.
+
+    ADK validates agent (node) names as Python identifiers, so hyphens and
+    other non-identifier characters (common in fleet names like
+    'weather-agent') are replaced with underscores. A leading digit is
+    prefixed with an underscore.
+    """
+    node = re.sub(r"\W", "_", name)
+    if node and node[0].isdigit():
+        node = f"_{node}"
+    return node or "_peer"
+
+
 def _build_remote_agents(spec: AgentSpec) -> list[Any]:
     """Wrap declared A2A collaborators as RemoteA2aAgent AgentTools (RFC-005 §7.2).
 
@@ -313,8 +328,11 @@ def _build_remote_agents(spec: AgentSpec) -> list[Any]:
             caller=caller, authenticator=auth_for_client
         )
 
+        # ADK requires the agent (node) name to be a valid Python identifier,
+        # so hyphenated fleet names like 'weather-agent' must be normalized.
+        # peer.name is preserved everywhere else (identity, auth, description).
         remote = RemoteA2aAgent(
-            name=peer.name,
+            name=_to_node_name(peer.name),
             agent_card=card_url,
             description=description,
             httpx_client=httpx_client,

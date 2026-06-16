@@ -79,7 +79,9 @@ cd examples/a2a-collaboration/trip-planner
 uv venv && source .venv/bin/activate
 uv pip install -r requirements.txt
 cp trip_planner/.env.example trip_planner/.env      # add GOOGLE_API_KEY
-export WEATHER_AGENT_URL=http://localhost:8001
+# The trip-planner declares its peer by logical name (`ref: zil://fleet/weather-agent`).
+# Locally, resolve that name with the in-process registry mapping:
+export ZIL_FLEET_REGISTRY="weather-agent=http://localhost:8001"
 
 zil run     # then ask: "Plan a weekend trip to Lisbon — what should I pack?"
 ```
@@ -96,7 +98,7 @@ zil validate --project-dir examples/a2a-collaboration/trip-planner
 
 # Online skill validation — with the weather-agent running, verify that the
 # trip-planner's declared `get-forecast` skill is actually advertised by the peer:
-WEATHER_AGENT_URL=http://localhost:8001 \
+ZIL_FLEET_REGISTRY="weather-agent=http://localhost:8001" \
     zil validate --project-dir examples/a2a-collaboration/trip-planner --online
 ```
 
@@ -121,13 +123,21 @@ Replace `auth: none` in `trip-planner/manifest.yaml` with one of:
 - **`gcp-id-token`** — audience-scoped Google ID token; pairs with a
   private-by-default Cloud Run deployment of the weather-agent.
 
-## Registry mode (dynamic discovery)
+## Discovery modes
 
-This example resolves the peer from a hard-coded URL (`url: ${WEATHER_AGENT_URL}`).
-For a fleet where callers shouldn't know every peer's address, declare peers by
-logical name (`ref: zil://fleet/weather-agent`) and resolve them through a
-registry. See [`a2a-registry`](../a2a-registry) for a runnable reference registry
-service and the `HttpRegistryResolver` it pairs with.
+The trip-planner declares its peer by **logical name** (`ref: zil://fleet/weather-agent`)
+so callers don't hard-code each peer's address. The name is resolved differently
+depending on the environment, with no code or manifest change:
+
+- **Local:** the in-process registry mapping above
+  (`ZIL_FLEET_REGISTRY="weather-agent=http://localhost:8001"`).
+- **Production:** a *registry of record* over HTTP. The platform injects
+  `ZIL_FLEET_REGISTRY_URL` (+ `ZIL_FLEET_REGISTRY_TOKEN`) at deploy time and the
+  `HttpRegistryResolver` resolves `ref:` peers automatically. See
+  [`a2a-registry`](../a2a-registry) for a runnable reference registry service.
+
+To pin a peer to an explicit address instead (static discovery), swap the
+collaborator's `ref:` for `url: ${WEATHER_AGENT_URL}` in `trip-planner/manifest.yaml`.
 
 ## Learn more
 

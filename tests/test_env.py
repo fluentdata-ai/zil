@@ -194,6 +194,42 @@ class TestEnvResolution:
         result = _resolve_env_vars(manifest, None)
         assert result == {}
 
+    def test_resolve_forwards_undeclared_infra_vars(self, tmp_path: Path) -> None:
+        """Platform-injected vars not in spec.env are forwarded from the file.
+
+        Registry discovery relies on the runtime writing ZIL_FLEET_REGISTRY_URL
+        (+ token) to --env-file; these are intentionally not declared in user
+        manifests, so they must still reach the deployed container.
+        """
+        env_file = tmp_path / ".env.deploy"
+        env_file.write_text(
+            "GOOGLE_API_KEY=sk-123\n"
+            "ZIL_FLEET_REGISTRY_URL=https://example.com/api/registry/ws-1\n"
+            "ZIL_FLEET_REGISTRY_TOKEN=secret-token\n"
+        )
+        manifest = {
+            "spec": {
+                "env": [
+                    {"name": "GOOGLE_API_KEY", "required": True, "secret": True},
+                ]
+            }
+        }
+        result = _resolve_env_vars(manifest, env_file)
+        assert result == {
+            "GOOGLE_API_KEY": "sk-123",
+            "ZIL_FLEET_REGISTRY_URL": "https://example.com/api/registry/ws-1",
+            "ZIL_FLEET_REGISTRY_TOKEN": "secret-token",
+        }
+
+    def test_resolve_forwards_infra_vars_with_no_declarations(
+        self, tmp_path: Path
+    ) -> None:
+        """Env-file vars are forwarded even when the manifest declares no env."""
+        env_file = tmp_path / ".env.deploy"
+        env_file.write_text("ZIL_FLEET_REGISTRY_URL=https://example.com/r\n")
+        result = _resolve_env_vars({"spec": {}}, env_file)
+        assert result == {"ZIL_FLEET_REGISTRY_URL": "https://example.com/r"}
+
     def test_resolve_file_not_found(self, tmp_path: Path) -> None:
         """SystemExit when env file path doesn't exist."""
         manifest = {"spec": {"env": [{"name": "X", "required": True}]}}

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zil-ai"
-version = "0.1.20"
+version = "0.1.21"
 description = "A framework for production AI agents"
 readme = "README.md"
 license = "Apache-2.0"
@@ -60,7 +60,10 @@ memory = [
 serve = [
     "fastapi>=0.100.0",
     "uvicorn>=0.24.0",
-    "a2a-sdk>=1.0",
+    # Must match google-adk's a2a extra: RemoteA2aAgent imports symbols
+    # (e.g. ClientEvent) that only exist in the 0.3.x line. a2a-sdk 1.0
+    # removed them, so a >=1.0 pin breaks ADK collaborators at import time.
+    "a2a-sdk>=0.3.4,<0.4",
 ]
 
 [project.scripts]

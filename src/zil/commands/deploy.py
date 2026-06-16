@@ -121,13 +121,14 @@ def _resolve_env_vars(
 ) -> dict[str, str]:
     """Resolve env var values from --env-file or interactive prompts.
 
-    Returns a dict of {VAR_NAME: value} for all declared vars.
+    Returns a dict of {VAR_NAME: value} containing every entry from the env
+    file (so platform-injected infra vars like ZIL_FLEET_REGISTRY_URL are
+    forwarded) plus all declared spec.env vars resolved via defaults,
+    os.environ, or interactive prompts.
     """
     env_declarations: list[dict[str, Any]] = (
         manifest.get("spec", {}).get("env") or []
     )
-    if not env_declarations:
-        return {}
 
     # Load values from env file if provided
     file_values: dict[str, str] = {}
@@ -139,7 +140,17 @@ def _resolve_env_vars(
             raise SystemExit(1)
         file_values = _parse_env_file(env_file)
 
-    resolved: dict[str, str] = {}
+    # Forward every value present in the env file. Platform-injected infra vars
+    # (e.g. ZIL_FLEET_REGISTRY_URL / ZIL_FLEET_REGISTRY_TOKEN for registry
+    # discovery) are written to --env-file by the runtime but are intentionally
+    # not declared in user manifests, so resolving only spec.env would drop
+    # them. Declared-var resolution (defaults / os.environ / prompts /
+    # required-checks) is layered on top below.
+    resolved: dict[str, str] = dict(file_values)
+
+    if not env_declarations:
+        return resolved
+
     missing_required: list[str] = []
 
     for decl in env_declarations:

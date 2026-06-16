@@ -18,6 +18,13 @@ import httpx
 # the seam (the header) now so the wire carries caller identity from day one.
 CALLER_IDENTITY_HEADER = "X-Zil-Caller-Agent"
 
+# Peer agents are typically serverless (e.g. Cloud Run) and may be scaled to
+# zero, so the first request — including the lazy Agent Card fetch — can incur a
+# multi-second cold start. httpx's 5s default is too tight for that and surfaces
+# as a spurious "503 Network communication error" when resolving the card. Use
+# generous read/connect timeouts so a cold-starting peer is awaited, not failed.
+DEFAULT_PEER_TIMEOUT = httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=10.0)
+
 
 class PeerRequestAuth(httpx.Auth):
     """httpx auth flow attaching caller identity + per-mode auth to every call.
@@ -44,8 +51,14 @@ def build_peer_http_client(
     *,
     caller: str = "",
     authenticator: Any = None,
+    timeout: httpx.Timeout | float | None = None,
 ) -> httpx.AsyncClient:
-    """Build an httpx client that asserts caller identity and attaches auth."""
+    """Build an httpx client that asserts caller identity and attaches auth.
+
+    ``timeout`` defaults to :data:`DEFAULT_PEER_TIMEOUT`, which tolerates a
+    serverless peer's cold start; pass an explicit value to override.
+    """
     return httpx.AsyncClient(
-        auth=PeerRequestAuth(caller=caller, authenticator=authenticator)
+        auth=PeerRequestAuth(caller=caller, authenticator=authenticator),
+        timeout=DEFAULT_PEER_TIMEOUT if timeout is None else timeout,
     )

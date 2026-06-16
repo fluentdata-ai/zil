@@ -439,6 +439,23 @@ class TestRemoteAgents:
         assert "refund" in remote.description
         self._close(remote)
 
+    def test_hyphenated_peer_name_normalized_to_identifier(self):
+        pytest.importorskip("google.adk")
+        from zil.collaboration.contract import PeerRef
+        from zil.sdk.frameworks.adk.backend import _build_remote_agents
+
+        # ADK validates node names as Python identifiers; hyphenated fleet
+        # names like 'weather-agent' must be normalized or construction fails.
+        spec = self._spec_with([
+            PeerRef(name="weather-agent", url="https://weather.run.app",
+                    skills=["get-forecast"], auth="none"),
+        ])
+        remote = _build_remote_agents(spec)[0].agent
+        assert remote.name == "weather_agent"
+        # The original logical name is still surfaced to the model.
+        assert "weather-agent" in remote.description
+        self._close(remote)
+
     def test_unresolvable_env_url_is_skipped(self):
         pytest.importorskip("google.adk")
         from zil.collaboration.contract import PeerRef

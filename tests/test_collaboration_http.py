@@ -7,6 +7,7 @@ import httpx
 from zil.collaboration.auth import BearerAuthenticator, NoneAuthenticator
 from zil.collaboration.http import (
     CALLER_IDENTITY_HEADER,
+    DEFAULT_PEER_TIMEOUT,
     PeerRequestAuth,
     build_peer_http_client,
 )
@@ -65,5 +66,22 @@ class TestBuildPeerHttpClient:
         try:
             assert isinstance(client, httpx.AsyncClient)
             assert isinstance(client.auth, PeerRequestAuth)
+        finally:
+            _aclose(client)
+
+    def test_defaults_to_cold_start_tolerant_timeout(self):
+        # A serverless peer's cold start must not trip httpx's 5s default and
+        # surface as a spurious 503 when resolving the Agent Card.
+        client = build_peer_http_client(caller="o")
+        try:
+            assert client.timeout == DEFAULT_PEER_TIMEOUT
+            assert client.timeout.read == 60.0
+        finally:
+            _aclose(client)
+
+    def test_timeout_override_is_respected(self):
+        client = build_peer_http_client(caller="o", timeout=1.5)
+        try:
+            assert client.timeout.read == 1.5
         finally:
             _aclose(client)
